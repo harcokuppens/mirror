@@ -1,5 +1,5 @@
 # mirror
-Mirror synchronises contents of sourcedir into  destdir which can be on a remote machine, a docker container, or on a docker image.
+Mirror synchronises contents of sourcedir into  destdir which can be on a remote machine, a docker container, or on a docker image. Mirror wraps the `rsync` command to give it a simpler interface to ease mirror and diffdir operations. 
 
 ## Description
 
