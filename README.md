@@ -30,7 +30,7 @@ Using the `-i` option more details of the changes are listed such as
 attribute changes. With the `-q` option on `mirror` the operation 
 is done quietly without anything reported. 
   
-## Installation ##
+## Installation 
 
 
 The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
@@ -56,7 +56,7 @@ Requirements:
 For Windows you could use WSL to run the `mirror` utility. You can also install the `mirror` utility with [cygwin](https://cygwin.org) to get a bash shell to run the script.     
 	    
 	    
-## Usage ##
+## Usage 
  
 
     mirror
@@ -78,7 +78,7 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
       * mirror --help
       * https://github.com/harcokuppens/mirror
 
-##Options##
+## Options
      
     -a            to preserve all; meaning preserving also user,group,other and their permissions
                   Without this option the only attributes preserved are the modification times,
@@ -139,7 +139,7 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
     --rsync-options RSYNC_OPTIONS  
                   add extra rsync options; see man page of rsync
 
-##Notes##
+## Notes
     
 DESTDIR and SRCDIR are taken relative from the default remote directory,
 unless they start with a '/' then they are taken as absolute paths from the
