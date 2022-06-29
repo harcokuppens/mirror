@@ -15,8 +15,7 @@ USAGE:
        mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
     
   diffdir 
-       diffdir == mirror --dry-run -i
-       shows itemize changes by default, but with 'diffdir -s' we get simplified diffdir output
+       diffdir == mirror --dry-run
     
   More documentation
     * mirror --help
@@ -48,65 +47,76 @@ DESCRIPTION
   and cannot do bi-directional sync like many cloud storage
   solutions nowadays do.
   
-  The diffdir command is just 'mirror --dry-run -i' to quickly find
+  The diffdir command is just 'mirror --dry-run' to quickly find
   the difference between sourcedir into  destdir. 
+  
+  Both mirror and diffdir list the changes applied to the destdir. 
+  Using the '-i' option more details of the changes are listed such as 
+  attribute changes. With the '-q' option on mirror the operation 
+  is done quietly without anything reported. 
+  
 
 $USAGE 
 
 OPTIONS
-   -a            to preserve all; meaning preserving also user,group,other and their permissions
-                 Without this option the only attributes preserved are the modification times,
-                 which often suffices for a single user computer
-   --dry-run     dry runs the mirror. Which means it doesn't do any file transfers, 
-                 instead it will just report the actions it would have taken.
-   --file        mirror a file instead of a directory              
-   -f PATTERN    
-   --filter PATTERN
-                 applies a filter on what to mirror; with '- path' you can exclude a path, 
-                 and with '+ subpath' you can include a subpath from the excluded path again. 
-                 Paths starting with '/' are seen as absolute root-based paths, and
-                 without are seen as relative paths which are matched in each subdir. 
-                 For more details see the man page of rsync. 
-   -i            Itemize changes: output a change-summary for all updates on destination to let it mirror the source.
-                 Each item's change-summary is represented with the format:
+  -a            to preserve all; meaning preserving also user,group,other and their permissions
+                Without this option the only attributes preserved are the modification times,
+                which often suffices for a single user computer
+  --debug       Print mirror's debug messages.                 
+  --dry-run     dry runs the mirror. Which means it doesn't do any file transfers, 
+                instead it will just report the actions it would have taken.
+  --file        mirror a file instead of a directory              
+  -f PATTERN    
+  --filter PATTERN
+                applies a filter on what to mirror; with '- path' you can exclude a path, 
+                and with '+ subpath' you can include a subpath from the excluded path again. 
+                Paths starting with '/' are seen as absolute root-based paths, and
+                without are seen as relative paths which are matched in each subdir. 
+                For more details see the man page of rsync. 
+  -i            Itemize changes: output a change-summary for all updates on destination to let it
+                mirror the source. Each item's change-summary is represented with the format:
 
-                     YXcstpog
-                     
-                 where
-                     Y is updatetype letter:  
-                         .(same) c(change/creation) <(transfer to sourcedir) > (transfer to destdir)
-                     X is filetype letter:  
-                         f(ile), d(irectory), an L for a symlink, a D for a device, and a S for a special file (e.g. named sockets and fifos).
-                     cstpog are possible letters which specify what is different:
-                         c(hecksum) s(size) t(ime modification) p(ermissions) o(wner) g(roup)
-                         per letter L we have 3 cases: 
-                           a) on change the letter 'L' is printed
-                           b) no change then '.' is printed
-                           c) on a new file or directory '+' is printed
-                 for more info: see man page of rsync      
-   -s            Simple diff; disable -i option.                  
-   --keep-dest-only      
-                 do not delete files on destination which are not in source   
-   --no-git      excludes .git folder from mirroring; same as:  -f '- .git
-   --no-warn     do not warn about the risks, but directly do the mirror
-   -t TRIGGER   
-   --trigger TRIGGER   
-                 The trigger option determines how it is determined whether a file must be
-                 synced or not. We have the following triggers: 
-                   - modsize: either modification or size change triggers sync (default)
-                   - sizeonly: only size change triggers sync 
-                   - checksum: difference in local and remote checksum triggers sync
-                   - always: always triggers sync
-                 Note: even when doing always a sync the rsync algorithm does a smart
-                       delta sync, meaning it only needs to transfer the difference 
-                       between a local and remote file to sync them.
-   -u, --update  skip files that are newer on the destination         
-   -v or -vv     This  option increases the amount of information you are given during the transfer.  By default, mirror works silently. 
-                 A single -v will give you information about what files are being transferred and a brief summary at the end. 
-                 Two -v options will give you information on what files are being skipped and slightly more information at the end.              
-   --rsync-options RSYNC_OPTIONS  
-                 add extra rsync options; see man page of rsync
-   -d            Print mirror's debug messages.                 
+                    YXcstpog
+                    
+                where
+                    Y is updatetype letter:  
+                        .(same) c(change/creation) <(transfer to sourcedir) > (transfer to destdir)
+                    X is filetype letter:  
+                        f(ile), d(irectory), an L for a symlink, a D for a device, and a S for a 
+                        special file (e.g. named sockets and fifos).
+                   cstpog are possible letters which specify what is different:
+                        c(hecksum) s(size) t(ime modification) p(ermissions) o(wner) g(roup)
+                        per letter L we have 3 cases: 
+                          a) on change the letter 'L' is printed
+                          b) no change then '.' is printed
+                          c) on a new file or directory '+' is printed
+                for more info: see man page of rsync      
+                The '-i' option disables the implicit '-v' option. To enable both
+                then give both options explicit.
+  --keep-dest-only      
+                do not delete files on destination which are not in source   
+  --no-git      excludes .git folder from mirroring; same as:  -f '- .git
+  --no-warn     do not warn about the risks, but directly do the mirror
+  -t TRIGGER   
+  --trigger TRIGGER   
+                The trigger option determines how it is determined whether a file must be
+                synced or not. We have the following triggers: 
+                  - modsize: either modification or size change triggers sync (default)
+                  - sizeonly: only size change triggers sync 
+                  - checksum: difference in local and remote checksum triggers sync
+                  - always: always triggers sync
+                Note: even when doing always a sync the rsync algorithm does a smart
+                      delta sync, meaning it only needs to transfer the difference 
+                      between a local and remote file to sync them.
+  -u, --update  skip files that are newer on the destination         
+  -v or -vv     This  option increases the amount of information you are given during the transfer.  
+                By default, mirror take the -v option implicitly enabled. 
+                A single -v will give you information about what files are being transferred and a 
+                brief summary at the end.  Two -v options will give you information on what files are 
+                being skipped and slightly more information at the end.              
+  -q            Quiet. Mirror without reporting anything.  
+  --rsync-options RSYNC_OPTIONS  
+                add extra rsync options; see man page of rsync
 
 NOTES
   DESTDIR and SRCDIR are taken relative from the default remote directory,
@@ -241,7 +251,7 @@ mirror() {
   local update_option=""
   local verbose_option=""
   local rsync_options=""
-  local simple_diff="false"
+  local quiet_option="false"
   
   
   
@@ -260,25 +270,18 @@ mirror() {
           shift
           continue
       fi
-      if [[  "$1" == "-d" ]]
+      if [[  "$1" == "--debug" ]]
       then  
           DEBUG="true"
           shift
           continue
       fi
-      if [[  "$1" == "-s" ]]
+      if [[  "$1" == "-q" ]]
       then  
-          simple_diff="true"
+          quiet_option="true"
           shift
           continue
       fi
-      if [[  "$1" == "--diff" ]]
-      then  
-          shift
-          dry_run_option="--dry-run"
-          itemize_option="-i"
-          continue
-      fi 
       if [[  "$1" == "-i" ]]
       then  
           shift
@@ -385,30 +388,23 @@ mirror() {
          continue
       fi    
       
-
       # if no match found, then
       echo "ERROR: unknown option '$1'" >&2
       exit 1   
-  done   
-
-  # if activating dry-run option then show diff output ; if itemize option
-  # disabled then enable basic rsync verbose option (-v) which shows basic difference
-  if [[ "$dry_run_option" != "" &&  "$itemize_option" == "" && "$verbose_option" == "" ]]
+  done    
+  
+  # if both itemize_option and verbose_option disable the take verbose_option implicitly
+  if [[ "$itemize_option" == "" && "$verbose_option" == "" ]]
   then 
-      echo "Note: verbose option (-v) is applied to show dry-run updates.">&2
-      echo "      you can also use itemize option (-i) to show more details of the updates.">&2
       verbose_option="-v"    
-  fi         
-
-  # simple_diff option disables itemised diffdir
-  if [[ "$simple_diff" == "true"  ]]
+  fi        
+  
+  # quiet option overrules always 
+  if [[ "$quiet_option" == "true" ]]
   then 
-      itemize_option=""    
-      if [[ "$verbose_option" == "" ]]
-      then 
-          verbose_option="-v"    
-      fi         
-  fi         
+      verbose_option=""  
+      itemize_option=""  
+  fi             
                 
   if [[  "$#" -ne "2" ]]
   then

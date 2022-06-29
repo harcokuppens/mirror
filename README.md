@@ -22,11 +22,15 @@ better the functionality because rsync does mirroring,
 and cannot do bi-directional sync like many cloud storage
 solutions nowadays do.
 
-The `diffdir` command is just 'mirror --dry-run -i' to quickly find
+The `diffdir` command is just `mirror --dry-run` to quickly find
 the difference between sourcedir into  destdir. 
 
+Both `mirror` and `diffdir` list the changes applied to the destdir. 
+Using the `-i` option more details of the changes are listed such as 
+attribute changes. With the `-q` option on `mirror` the operation 
+is done quietly without anything reported. 
+  
 ## Installation ##
-
 
 
 The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
@@ -45,7 +49,6 @@ Requirements:
 
 * `bash` shell
 * `rsync` tool
-* `pager` tool, by default installed on most systems and set to `less`
 * `ssh` tool, only needed for mirroring to/from remote machine
 * `docker` tool, only needed for mirroring to/from docker image/container
 
@@ -54,9 +57,9 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
 	    
 	    
 ## Usage ##
-  
+ 
 
-    USAGE 
+    mirror
       local mode
          mirror [OPTIONS] SOURCEDIR                               DESTDIR
       ssh mode    
@@ -67,81 +70,93 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
          mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
          mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
          mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
-  
-      special diffdir mode
-         alias diffdir =  'mirror --dry-run -i'
+      
+    diffdir 
+         diffdir == mirror --dry-run
+      
+    More documentation
+      * mirror --help
+      * https://github.com/harcokuppens/mirror
+
+##Options##
      
+    -a            to preserve all; meaning preserving also user,group,other and their permissions
+                  Without this option the only attributes preserved are the modification times,
+                  which often suffices for a single user computer
+    --debug       Print mirror's debug messages.                 
+    --dry-run     dry runs the mirror. Which means it doesn't do any file transfers, 
+                  instead it will just report the actions it would have taken.
+    --file        mirror a file instead of a directory              
+    -f PATTERN    
+    --filter PATTERN
+                  applies a filter on what to mirror; with '- path' you can exclude a path, 
+                  and with '+ subpath' you can include a subpath from the excluded path again. 
+                  Paths starting with '/' are seen as absolute root-based paths, and
+                  without are seen as relative paths which are matched in each subdir. 
+                  For more details see the man page of rsync. 
+    -i            Itemize changes: output a change-summary for all updates on destination to let it
+                  mirror the source. Each item's change-summary is represented with the format:
 
-    OPTIONS
-       -a            to preserve all; meaning preserving also user,group,other and their permissions
-                     Without this option the only attributes preserved are the modification times,
-                     which often suffices for a single user computer
-       --dry-run     dry runs the mirror. Which means it doesn't do any file transfers, 
-                     instead it will just report the actions it would have taken.
-       --file        mirror a file instead of a directory              
-       -f PATTERN    
-       --filter PATTERN
-                     applies a filter on what to mirror; with '- path' you can exclude a path, 
-                     and with '+ subpath' you can include a subpath from the excluded path again. 
-                     Paths starting with '/' are seen as absolute root-based paths, and
-                     without are seen as relative paths which are matched in each subdir. 
-                     For more details see the man page of rsync. 
-       -i            Itemize changes: output a change-summary for all updates on destination to let it mirror the source.
-                     Each item's change-summary is represented with the format:
+                      YXcstpog
+                      
+                  where
+                      Y is updatetype letter:  
+                          .(same) c(change/creation) <(transfer to sourcedir) > (transfer to destdir)
+                      X is filetype letter:  
+                          f(ile), d(irectory), an L for a symlink, a D for a device, and a S for a 
+                          special file (e.g. named sockets and fifos).
+                      cstpog are possible letters which specify what is different:
+                          c(hecksum) s(size) t(ime modification) p(ermissions) o(wner) g(roup)
+                          per letter L we have 3 cases: 
+                            a) on change the letter 'L' is printed
+                            b) no change then '.' is printed
+                            c) on a new file or directory '+' is printed
+                  for more info: see man page of rsync      
+                  The '-i' option disables the implicit '-v' option. To enable both
+                  then give both options explicit.
+    --keep-dest-only      
+                  do not delete files on destination which are not in source   
+    --no-git      excludes .git folder from mirroring; same as:  -f '- .git
+    --no-warn     do not warn about the risks, but directly do the mirror
+    -t TRIGGER   
+    --trigger TRIGGER   
+                  The trigger option determines how it is determined whether a file must be
+                  synced or not. We have the following triggers: 
+                    - modsize: either modification or size change triggers sync (default)
+                    - sizeonly: only size change triggers sync 
+                    - checksum: difference in local and remote checksum triggers sync
+                    - always: always triggers sync
+                  Note: even when doing always a sync the rsync algorithm does a smart
+                        delta sync, meaning it only needs to transfer the difference 
+                        between a local and remote file to sync them.
+    -u, --update  skip files that are newer on the destination         
+    -v or -vv     This  option increases the amount of information you are given during the transfer.  
+                  By default, mirror take the -v option implicitly enabled. 
+                  A single -v will give you information about what files are being transferred and a 
+                  brief summary at the end.  Two -v options will give you information on what files are 
+                  being skipped and slightly more information at the end.              
+    -q            Quiet. Mirror without reporting anything.  
+    --rsync-options RSYNC_OPTIONS  
+                  add extra rsync options; see man page of rsync
 
-                         YXcstpog
-                     
-                     where
-                         Y is updatetype letter:  
-                             .(same) c(change/creation) <(transfer to sourcedir) > (transfer to destdir)
-                         X is filetype letter:  
-                             f(ile), d(irectory), an L for a symlink, a D for a device, and a S for a special file (e.g. named sockets and fifos).
-                         cstpog are possible letters which specify what is different:
-                             c(hecksum) s(size) t(ime modification) p(ermissions) o(wner) g(roup)
-                             per letter L we have 3 cases: 
-                               a) on change the letter 'L' is printed
-                               b) no change then '.' is printed
-                               c) on a new file or directory '+' is printed
-                     for more info: see man page of rsync      
-       --keep-dest-only      
-                     do not delete files on destination which are not in source   
-       --no-git      excludes .git folder from mirroring; same as:  -f '- .git
-       --no-warn     do not warn about the risks, but directly do the mirror
-       -t TRIGGER   
-       --trigger TRIGGER   
-                     The trigger option determines how it is determined whether a file must be
-                     synced or not. We have the following triggers: 
-                       - modsize: either modification or size change triggers sync (default)
-                       - sizeonly: only size change triggers sync 
-                       - checksum: difference in local and remote checksum triggers sync
-                       - always: always triggers sync
-                     Note: even when doing always a sync the rsync algorithm does a smart
-                           delta sync, meaning it only needs to transfer the difference 
-                           between a local and remote file to sync them.
-       -u, --update  skip files that are newer on the destination         
-       -v or -vv     This  option increases the amount of information you are given during the transfer.  By default, mirror works silently. 
-                     A single -v will give you information about what files are being transferred and a brief summary at the end. 
-                     Two -v options will give you information on what files are being skipped and slightly more information at the end.              
-       --rsync-options RSYNC_OPTIONS  
-                     add extra rsync options; see man page of rsync
-       -d            Print mirror's debug messages.                 
+##Notes##
+    
+DESTDIR and SRCDIR are taken relative from the default remote directory,
+unless they start with a '/' then they are taken as absolute paths from the
+root directory on the remote.
 
-    NOTES
-      DESTDIR and SRCDIR are taken relative from the default remote directory,
-      unless they start with a '/' then they are taken as absolute paths from the
-      root directory on the remote.
-   
-      Mirror is wrapper around rsync. In rsync you can specify a remote shell for
-      either source or destination.  The remote shell is used to start rsync on the
-      remote side with which the local rsync communicates to via stdin/stdout to do the sync. 
-      So it is required that rsync is installed on the remote.
-      For a remote host using ssh the remove shell is 'ssh'. For a remote docker 
-      container the the remote shell is 'docker exec -i'.
-  
-      For a remote using docker:// we use a docker container as remote,
-      so we use the containername instead of hostname to specify the remote location.
-  
-      For a remote using docker-img:// we use a docker image as remote, 
-      but because we can only rsync into a running container a dummy container
-      is created for the image. After mirroring on the container is done a 
-      modified image is extracted from the container. (using 'docker commit')
+Mirror is wrapper around `rsync`. In rsync you can specify a remote shell for
+either source or destination.  The remote shell is used to start rsync on the
+remote side with which the local rsync communicates to via `stdin`/`stdout` to do the sync. 
+
+So it is required that `rsync` is installed on the remote.
+For a remote host using ssh the remove shell is `ssh`. For a remote docker 
+container the the remote shell is `docker exec -i`.
+
+For a remote using `docker://` we use a docker container as remote,
+so we use the containername instead of hostname to specify the remote location.
+
+For a remote using `docker-img://` we use a docker image as remote, 
+but because we can only rsync into a running container a dummy container
+is created for the image. After mirroring on the container is done a 
+modified image is extracted from the container. (using `docker commit`)
