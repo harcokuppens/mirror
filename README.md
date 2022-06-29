@@ -35,9 +35,9 @@ The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can eas
     VERSION="v1.0.0" 
     INSTALL_DIR=/usr/local/bin # make sure INSTALL_DIR is in your PATH environment variable
     DOWNLOAD_URL="https://raw.githubusercontent.com/harcokuppens/mirror/${VERSION}/bin/"
-    curl -o ${INSTALL_DIR}/mirror  "$DOWNLOAD_URL/mirror"
+    curl -Lo ${INSTALL_DIR}/mirror  "$DOWNLOAD_URL/mirror"
     chmod a+x ${INSTALL_DIR}/mirror
-    curl -o ${INSTALL_DIR}/diffdir  "$DOWNLOAD_URL/diffdir"
+    curl -Lo ${INSTALL_DIR}/diffdir  "$DOWNLOAD_URL/diffdir"
     chmod a+x ${INSTALL_DIR}/diffdir
     
       
