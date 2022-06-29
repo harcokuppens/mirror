@@ -3,14 +3,14 @@
 
 readonly USAGE=" 
 DESCRIPTION
-  Mirror synchronises contents of sourcedir into  destdir
+  The mirror command synchronises contents of sourcedir into  destdir
   where either sourcedir or destdir may be a directory
   on a remote machine, a docker container, or on a docker image.
   Destination is updated to match source, including deleting 
   files if necessary.
 
   Because mirror does delete files if necessary it by default 
-  mirror gives a warning, and asks you to continue or not:
+  gives a warning, and asks you to continue or not:
  
     We STRONGLY advice to do a 'dry-run' first (option -n), because 
     mirroring can destroy the destination if you are not careful!
@@ -22,7 +22,7 @@ DESCRIPTION
   and cannot do bi-directional sync like many cloud storage
   solutions nowadays do.
   
-  Diffdir command is just 'mirror --dry-run -i' to quickly find
+  The diffdir command is just 'mirror --dry-run -i' to quickly find
   the difference between sourcedir into  destdir. 
   
 
@@ -30,7 +30,7 @@ USAGE
   local mode
      mirror [OPTIONS] SOURCEDIR                               DESTDIR
   ssh mode    
-     mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR                      DESTDIR
+     mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR              DESTDIR
      mirror [OPTIONS] SOURCEDIR                               [ssh://]HOSTNAME:DESTDIR
   docker mode    
      mirror [OPTIONS] docker://CONTAINERNAME:SOURCEDIR        DESTDIR

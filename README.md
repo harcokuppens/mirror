@@ -1,11 +1,35 @@
 # mirror
-mirror two directories between either local or remote; where remote is either on ssh or docker backend
+Mirror synchronises contents of sourcedir into  destdir which can be on a remote machine, a docker container, or on a docker image.
+
+## Description
+
+The `mirror` command synchronises contents of sourcedir into  destdir
+where either sourcedir or destdir may be a directory
+on a remote machine, a docker container, or on a docker image.
+Destination is updated to match source, including deleting 
+files if necessary.
+
+Because mirror does delete files if necessary it by default 
+gives a warning, and asks you to continue or not:
+	
+>We STRONGLY advice to do a 'dry-run' first (option -n), because 
+>mirroring can destroy the destination if you are not careful!<br>
+>Are you sure you want to continue? <y/N> y
+
+Mirror wraps the `rsync` command to give it a simpler interface
+to ease mirroring operations. The name mirror describes
+better the functionality because rsync does mirroring,
+and cannot do bi-directional sync like many cloud storage
+solutions nowadays do.
+
+The `diffdir` command is just 'mirror --dry-run -i' to quickly find
+the difference between sourcedir into  destdir. 
 
 ## Installation ##
 
 
 
-The `mirror` and `diffdir` utilities are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
+The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
 
 
     VERSION="v1.0.0" 
@@ -29,36 +53,13 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
 	    
 	    
 ## Usage ##
-
-    DESCRIPTION
-      Mirror synchronises contents of sourcedir into  destdir
-      where either sourcedir or destdir may be a directory
-      on a remote machine, a docker container, or on a docker image.
-      Destination is updated to match source, including deleting 
-      files if necessary.
-
-      Because mirror does delete files if necessary it by default 
-      mirror gives a warning, and asks you to continue or not:
- 
-        We STRONGLY advice to do a 'dry-run' first (option -n), because 
-        mirroring can destroy the destination if you are not careful!
-        Are you sure you want to continue? <y/N> y
-
-      Mirror wraps the rsync command to give it a simpler interface
-      to ease mirroring operations. The name mirror describes
-      better the functionality because rsync does mirroring,
-      and cannot do bi-directional sync like many cloud storage
-      solutions nowadays do.
-  
-      Diffdir command is just 'mirror --dry-run -i' to quickly find
-      the difference between sourcedir into  destdir. 
   
 
     USAGE 
       local mode
          mirror [OPTIONS] SOURCEDIR                               DESTDIR
       ssh mode    
-         mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR                      DESTDIR
+         mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR              DESTDIR
          mirror [OPTIONS] SOURCEDIR                               [ssh://]HOSTNAME:DESTDIR
       docker mode    
          mirror [OPTIONS] docker://CONTAINERNAME:SOURCEDIR        DESTDIR
