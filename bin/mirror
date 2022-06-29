@@ -1,0 +1,636 @@
+#!/bin/bash
+
+
+readonly USAGE=" 
+DESCRIPTION
+  Mirror synchronises contents of sourcedir into  destdir
+  where either sourcedir or destdir may be a directory
+  on a remote machine, a docker container, or on a docker image.
+  Destination is updated to match source, including deleting 
+  files if necessary.
+
+  Because mirror does delete files if necessary it by default 
+  mirror gives a warning, and asks you to continue or not:
+ 
+    We STRONGLY advice to do a 'dry-run' first (option -n), because 
+    mirroring can destroy the destination if you are not careful!
+    Are you sure you want to continue? <y/N> y
+
+  Mirror wraps the rsync command to give it a simpler interface
+  to ease mirroring operations. The name mirror describes
+  better the functionality because rsync does mirroring,
+  and cannot do bi-directional sync like many cloud storage
+  solutions nowadays do.
+  
+  Diffdir command is just 'mirror --dry-run -i' to quickly find
+  the difference between sourcedir into  destdir. 
+  
+
+USAGE 
+  local mode
+     mirror [OPTIONS] SOURCEDIR                               DESTDIR
+  ssh mode    
+     mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR                      DESTDIR
+     mirror [OPTIONS] SOURCEDIR                               [ssh://]HOSTNAME:DESTDIR
+  docker mode    
+     mirror [OPTIONS] docker://CONTAINERNAME:SOURCEDIR        DESTDIR
+     mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
+     mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
+     mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
+  
+  special diffdir mode
+     alias diffdir =  'mirror --dry-run -i'
+     
+
+OPTIONS
+   -a            to preserve all; meaning preserving also user,group,other and their permissions
+                 Without this option the only attributes preserved are the modification times,
+                 which often suffices for a single user computer
+   --dry-run     dry runs the mirror. Which means it doesn't do any file transfers, 
+                 instead it will just report the actions it would have taken.
+   --file        mirror a file instead of a directory              
+   -f PATTERN    
+   --filter PATTERN
+                 applies a filter on what to mirror; with '- path' you can exclude a path, 
+                 and with '+ subpath' you can include a subpath from the excluded path again. 
+                 Paths starting with '/' are seen as absolute root-based paths, and
+                 without are seen as relative paths which are matched in each subdir. 
+                 For more details see the man page of rsync. 
+   -i            Itemize changes: output a change-summary for all updates on destination to let it mirror the source.
+                 Each item's change-summary is represented with the format:
+
+                     YXcstpog
+                     
+                 where
+                     Y is updatetype letter:  
+                         .(same) c(change/creation) <(transfer to sourcedir) > (transfer to destdir)
+                     X is filetype letter:  
+                         f(ile), d(irectory), an L for a symlink, a D for a device, and a S for a special file (e.g. named sockets and fifos).
+                     cstpog are possible letters which specify what is different:
+                         c(hecksum) s(size) t(ime modification) p(ermissions) o(wner) g(roup)
+                         per letter L we have 3 cases: 
+                           a) on change the letter 'L' is printed
+                           b) no change then '.' is printed
+                           c) on a new file or directory '+' is printed
+                 for more info: see man page of rsync      
+   --keep-dest-only      
+                 do not delete files on destination which are not in source   
+   --no-git      excludes .git folder from mirroring; same as:  -f '- .git
+   --no-warn     do not warn about the risks, but directly do the mirror
+   -t TRIGGER   
+   --trigger TRIGGER   
+                 The trigger option determines how it is determined whether a file must be
+                 synced or not. We have the following triggers: 
+                   - modsize: either modification or size change triggers sync (default)
+                   - sizeonly: only size change triggers sync 
+                   - checksum: difference in local and remote checksum triggers sync
+                   - always: always triggers sync
+                 Note: even when doing always a sync the rsync algorithm does a smart
+                       delta sync, meaning it only needs to transfer the difference 
+                       between a local and remote file to sync them.
+   -u, --update  skip files that are newer on the destination         
+   -v or -vv     This  option increases the amount of information you are given during the transfer.  By default, mirror works silently. 
+                 A single -v will give you information about what files are being transferred and a brief summary at the end. 
+                 Two -v options will give you information on what files are being skipped and slightly more information at the end.              
+   --rsync-options RSYNC_OPTIONS  
+                 add extra rsync options; see man page of rsync
+   -d            Print mirror's debug messages.                 
+
+NOTES
+  DESTDIR and SRCDIR are taken relative from the default remote directory,
+  unless they start with a '/' then they are taken as absolute paths from the
+  root directory on the remote.
+   
+  Mirror is wrapper around rsync. In rsync you can specify a remote shell for
+  either source or destination.  The remote shell is used to start rsync on the
+  remote side with which the local rsync communicates to via stdin/stdout to do the sync. 
+  So it is required that rsync is installed on the remote.
+  For a remote host using ssh the remove shell is 'ssh'. For a remote docker 
+  container the the remote shell is 'docker exec -i'.
+  
+  For a remote using docker:// we use a docker container as remote,
+  so we use the containername instead of hostname to specify the remote location.
+  
+  For a remote using docker-img:// we use a docker image as remote, 
+  but because we can only rsync into a running container a dummy container
+  is created for the image. After mirroring on the container is done a 
+  modified image is extracted from the container. (using 'docker commit')
+"
+
+# make script exit early on errors
+set -eE  # BEST: traps error in subshell with right linenumber in code
+       # -e  Exit immediately if a command exits with a non-zero status.
+       # -E  If set, the ERR trap is inherited by shell functions.
+       # We set this also for every function, because when in subshells
+       # set -eE is not inherited. By setting it in every function we
+       # sure it is enabled again. (set -u and set -x is always inherited in subshells)
+       # e.g. when calling a function in command substition
+       #   manifest_digest=$(get_manifest_digest_for_a_tag_for_a_specific_os_arch "$image" "$tag")
+       #                    `-> runs in subshell
+set -u # script ends with signal EXIT when unset variable is used
+       # also use "local" and "readonly" keywords to limit scope of declared variables
+set -o nounset;set -u
+# uncomment next two lines when developing; the EXIT trap is added for case the error message is forgotten 
+trap 'printf "\ntrap ERR errorcode:$? at linenumber:$LINENO  caused by \"${BASH_COMMAND}\"\n"' ERR
+trap 'errorcode=$? && command=${BASH_COMMAND} && [[ "$errorcode" != "0" ]] && printf "\ntrap EXIT errorcode:$errorcode at linenumber:$LINENO  caused by \"${command}\"\n"' EXIT
+# uncomment next line when developing and you want to trace an error
+#set -x 
+
+
+
+docker_check_container_exist() {
+    set -eE
+    local ctr="$1"
+    local result=$(docker container ls -q --filter "name=$ctr" )
+	if [[ -z "$result" ]] ;
+	then
+	   printf "false"
+    else   
+	   printf "true"
+	fi
+}    
+
+docker_check_image_exist() {
+    set -eE
+    local img="$1"
+    local result=$(docker image ls -q $img)
+	if [[ -z "$result" ]] ;
+	then
+	   printf "false"
+    else   
+	   printf "true"
+	fi
+}
+
+
+DEBUG="false"
+debug()
+{
+    # we loop over arguments because in "$@" the empty "" arguments are lost
+    # we print each argument in '' because an argument can contain spaces or other things 
+    # the shell can interpret again. Note: on passing the arguments are already interpreted 
+    # by the shell, and withing the '' quotes is what really is passed to the command.
+    # So you can directly execute the output of the debug command.
+    if [[ "$DEBUG" == "true" ]]; then
+        local numarg=0
+        totalargs=$#
+        printf "debug: " >&2
+        while [[ "$numarg" != "$totalargs" ]]
+        do
+            numarg=$((numarg+1)) 
+            #echo "value numarg: '$numarg'"
+            #echo "value \$numarg: '${!numarg}'"
+            printf "'${!numarg}' " >&2
+        done    
+        printf "\n" >&2
+    fi
+}
+
+
+mirror() {
+  set -eE
+  local preserve="lt"  
+  # so we preserve by default
+  #  -l, --links                 copy symlinks as symlinks
+  #  -t, --times                 preserve times
+
+  local options=() 
+  local dry_run_option=""
+  local file_option="false"
+  local give_warning="true"
+  local recursive_option="-r"
+  local filter_option=""
+  local itemize_option=""
+  local remote_shell_option=""
+  local remote_shell=""
+  local exclude_git_folder=""
+  local delete_option="--delete"
+  local trigger_option=""
+  local update_option=""
+  local verbose_option=""
+  local rsync_options=""
+  
+  
+  
+  while [[ "$#" > 0 && "$1" == -* ]]
+  do   
+      options+=( "$1" )
+      if [[ "$1" == "--help" || "$1" == "-h" ]]
+      then
+          echo "$USAGE"
+          exit 0
+      fi 
+      if [[  "$1" == "-v" ||  "$1" == "-vv" ]]
+      then  
+          verbose_option="$1"
+          shift
+          continue
+      fi
+      if [[  "$1" == "-d" ]]
+      then  
+          DEBUG="true"
+          shift
+          continue
+      fi
+      if [[  "$1" == "--diff" ]]
+      then  
+          shift
+          dry_run_option="--dry-run"
+          itemize_option="-i"
+          continue
+      fi 
+      if [[  "$1" == "-i" ]]
+      then  
+          shift
+          itemize_option="-i"
+          continue
+      fi           
+      if [[  "$1" == "-a" ]]
+      then  
+         shift # remove first argument
+         preserve="a"
+         #        -a, --archive
+         #            This is equivalent to -rlptgoD. It is a quick way of saying you want recursion and want to preserve almost everything 
+         #            => adds options pogD extra (compared with rtl)
+         # 
+         #         -p, --perms                 preserve permissions
+         #         -o, --owner                 preserve owner (super-user only)
+         #         -g, --group                 preserve group  
+         #         -D                          same as --devices --specials
+         #         --devices                   preserve device files (super-user only)
+         #         --specials                  preserve special files
+         continue
+      fi    
+      if [[  "$1" == "--keep-dest-only" ]]
+      then 
+         shift
+         delete_option=""
+         continue
+      fi    
+      if [[  "$1" == "--dry-run" || "$1" == "-n" ]]
+      then 
+         shift
+         dry_run_option="--dry-run"
+         give_warning="false"
+         continue
+      fi    
+      if [[  "$1" == "--file" ]]
+      then 
+         file_option="true"
+         recursive_option=""
+         shift 1
+         continue
+      fi    
+      if [[  "$1" == "-f" || "$1" == "--filter" ]]
+      then 
+         filter_option="-f '$2'"
+         options+=( "$2" ) 
+         shift 2
+         continue
+      fi    
+      if [[  "$1" == "--no-git" ]]
+      then   
+         shift
+         #  --exclude=PATTERN 
+         exclude_git_folder="--exclude=.git"
+         continue
+      fi    
+      if [[  "$1" == "--no-warn" ]]
+      then   
+         shift
+         give_warning="false"
+         continue
+      fi 
+      if [[  "$1" == "--trigger" || "$1" == "-t" ]]
+      then 
+         interface_trigger_option="$2"
+         options+=( "$2" ) 
+         shift 2
+         case "$interface_trigger_option" in
+
+           "modsize")
+             trigger_option=""
+             ;;
+           
+           "sizeonly")
+             trigger_option="--size-only"
+             ;;
+           
+           "checksum")
+             trigger_option="--checksum"
+             ;;
+
+           "always")
+             trigger_option="--ignore-times"
+             ;;
+
+           *)
+             echo "ERROR: unknown trigger '$interface_trigger_option'" >&2
+             exit 1
+             ;;
+         esac         
+         continue
+      fi    
+      if [[  "$1" == "-u" || "$1" == "--update" ]]
+      then 
+         update_option="$1"
+         shift 1       
+         continue
+      fi    
+      if [[  "$1" == "--rsync-options" ]]
+      then 
+         options+=( "$2" ) 
+         rsync_options="$2"
+         shift 2
+         continue
+      fi    
+      
+
+      # if no match found, then
+      echo "ERROR: unknown option '$1'" >&2
+      exit 1   
+  done   
+  if [[ "$dry_run_option" != "" &&  "$itemize_option" == "" && "$verbose_option" == "" ]]
+  then 
+      echo "Note: verbose option (-v) is applied to show dry-run updates.">&2
+      echo "      you can also use itemize option (-i) to show more details of the updates.">&2
+      verbose_option="-v"    
+  fi          
+                
+  if [[  "$#" -ne "2" ]]
+  then
+      echo "$USAGE"
+      exit 0
+  else
+      local source_mode dest_mode
+      local source="$1"
+      local dest="$2"
+      
+      if [[ "$give_warning" == "true" ]]
+      then   
+          local prompt
+          echo "We STRONGLY advice to do a 'dry-run' first (option -n), because mirroring"    
+          echo "can destroy the destination if you are not careful!"       
+          read -p "Are you sure you want to continue? <y/N> " prompt
+          if ! [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]
+          then
+            exit 0
+          fi
+      fi  
+      debug  "source: $source"
+      debug  "dest: $dest"
+
+      if [[ "$file_option" == "false" ]]
+      then
+          # ${x%/} removes trailing slash  => prevents getting // 
+          source="${source%/}/"
+          dest="${dest%/}/"
+          # explanation:
+          # rsync needs directory argument to be ended with '/' to mirror
+          # its content, otherwise it will also mirror the directory. 
+          # Latter we do not want, because is confusing.
+          # KISS: mirror does mirror contents of two directories"
+      fi 
+      
+      source_mode="$( __get_mode "$source" )"
+      dest_mode=$( __get_mode "$dest" )
+      
+      if   [[ "$source_mode" != "local" && "$dest_mode" == "local" ]]
+      then
+          remote_side="source"
+          mode="$source_mode"
+          remote="${source#*://}" # strip mode prefix
+          source="$remote"
+      elif [[ "$source_mode" == "local" && "$dest_mode" != "local" ]]
+      then
+          remote_side="dest"
+          mode="$dest_mode"
+          remote="${dest#*://}" # strip mode prefix
+          dest="$remote"
+      elif [[ "$source_mode" != "local" && "$dest_mode" != "local" ]]
+      then
+          echo "ERROR: source and destination cannot be both remotes" >&2
+          exit 1
+      else
+          mode="local"
+      fi
+      if [[ "$mode" != "local" && $remote != *:* ]]
+      then
+          echo "ERROR: incorrect remote location '$remote'" >&2
+          exit 1
+      fi    
+
+      if [[ "$mode" == "docker" || "$mode" == "ssh" ]]
+      then     
+          # use remote shell ('ssh' or 'docker exec -i') 
+          if [[ "$mode" == "docker" ]]
+          then
+              container="${remote%:*}"
+              if ! docker exec $container which rsync >& /dev/null
+              then     
+                  echo "ERROR: docker container '$container' does not contain 'rsync' which is required!" >&2
+                  exit 1
+              fi    
+              remote_shell_option="-e"
+              remote_shell="docker exec -i"
+          else    
+              remote_shell_option="-e"
+              remote_shell="ssh"
+          fi    
+      fi    
+
+      if [[ "$source_mode" == "local" ]]
+      then
+          if [[ ! -e "$source" ]]
+          then      
+             echo "ERROR: '$source' does not exist"
+             exit 1
+          fi         
+          if [[ "$file_option" == "false" &&  ! -d "$source" ]]
+          then      
+             echo "ERROR: local directory '$source' does not exist"
+             exit 1
+          fi   
+          if [[ "$file_option" == "true" &&  ! -f "$source" ]]
+          then
+             echo "ERROR: local file '$source' does not exist"
+             exit 1
+          fi     
+      fi            
+
+      if [[ "$mode" == "local" || "$mode" == "docker" || "$mode" == "ssh" ]]
+      then           
+          # problem:
+          #   "$remote_shell"
+          #   gives
+          #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument => WHAT we WANT!)
+          #     for remote_shell="":  ""     (WITH the " included in output, so command called sees "" as one argument  => PROBLEM: "" is interpreted as srcdir in below command!
+          #  => problem is that when having no remote shell it is still seen as argument because it is substituted as ""
+          # fix by using: ${parameter:+word}. If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
+          #   ${remote_shell:+"$remote_shell"}
+          #   gives
+          #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument)
+          #     for remote_shell="":  NOTHING     (not an argument anymore)
+          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
+          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
+      elif [[ "$mode" == "docker-img"  ]]
+      then
+
+          if [[ "$remote_side" == "source"  ]]
+          then 
+              # mirror from docker image to local dir
+
+              # source is specified as IMAGENAME[:TAG]:PATH
+              source_img="${source%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+              source_path="${source##*:}" # you get PATH by removing prefix till : greedy
+
+              if [[ $(docker_check_image_exist "$source_img") == "false" ]] 
+              then
+                 echo "ERROR: docker image '$source_img' doesn't exist" >&2 
+                 exit 1
+              fi
+
+              image=$source_img
+              if ! docker run --rm  --entrypoint="" $image which echo >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'echo' which is required for syncing with a docker image!" >&2
+                  exit 1
+              fi    
+              image=$source_img
+              if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                  exit 1
+              fi    
+
+              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
+              # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
+              source_ctr="ctr_dummy_${source_img%:*}"
+              if [[ $(docker_check_container_exist "$source_ctr") == "true" ]] 
+              then
+                 docker container rm -f "$source_ctr"
+              fi
+              # note: we use bash -c to run multiple commands to first echo what cmd we
+              #       apply to image which is shown in docker history of image, then
+              #       we replace bash process with sleep infinity process, so that only
+              #       one process is running in image. All processes run should effect
+              #       the filesystem.
+              docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" bash -c "exec sleep infinity # mirror  ${options[@]:+"${options[@]}"} docker-img://$source_img:$source_path $dest"  >& /dev/null
+              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
+              #  echo "${options[@]}" => options[@]: unbound variable if no options give
+              #  echo ${options[@]+"${options[@]}"}  => fix!
+              #  # where ${parameter:+word} If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
+                            
+              # mirror from container
+              debug mirror from container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
+              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
+              
+              # cleanup container
+              #docker container kill -s 9 "$source_ctr"
+              docker container rm -f "$source_ctr"  >& /dev/null
+          else
+              # mirror local dir into docker image    
+
+              # dest is specified as IMAGENAME[:TAG]:PATH
+              dest_img="${dest%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+              dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
+
+              if [[ $(docker_check_image_exist "$dest_img") == "false" ]] 
+              then
+                 echo "ERROR: docker image '$dest_img' doesn't exist" >&2
+                 exit 1
+              fi
+              
+              # if  docker container ls --format "table {{.Image}}"| tail -n +2 | grep "$dest_img"  >& /dev/null
+              # then
+              #     blocking_container=$(docker container ls --format "{{.Image}};{{.Names}}" | command grep "torxakis_prevbuild;"|cut -d ';' -f 2 | head -1)
+              #     echo "ERROR: docker image '$dest_img' is already used by container '$blocking_container' and can therefore not be modified." >&2
+              #     exit 1
+              #  fi           
+
+              image=$dest_img
+              if ! docker run --rm  --entrypoint="" $image which echo >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'echo' which is required for syncing with a docker image!" >&2
+                  exit 1
+              fi    
+              if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                  exit 1
+              fi    
+
+              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
+              dest_ctr="ctr_dummy_${dest_img%:*}"
+              if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]] 
+              then
+                 docker container rm -f "$dest_ctr"  >& /dev/null
+              fi
+             
+              # note: we use bash -c to run multiple commands to first echo what cmd we
+              #       apply to image which is shown in docker history of image, then
+              #       we replace bash process with sleep infinity process, so that only
+              #       one process is running in image. All processes run should effect
+              #       the filesystem.
+              docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" bash -c "exec sleep infinity # mirror ${options[@]+"${options[@]}"} $source docker-img://$dest_img:$dest_path"  >& /dev/null
+              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
+              #  echo "${options[@]}" => options[@]: unbound variable if no options give
+              #  echo ${options[@]+"${options[@]}"}  => fix!
+              
+              # mirror into container
+              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:$dest_path" 
+              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:$dest_path" 
+            
+              debug "run diff"
+              if [[  "$(docker container diff $dest_ctr)" == "" ]]
+              then
+                  debug "no change applied to image; no layers added"
+              else       
+                  #only if found change in container 
+
+                  debug "run commit"
+                  # create new image from container
+                  img_from_dest_ctr="img_${dest_ctr}"
+                  docker commit "${dest_ctr}" "${img_from_dest_ctr}"   >& /dev/null
+
+                  debug "run rm"
+                  # give new image the tag of the original image and cleanup the old image
+                  docker image rm --force "$dest_img"   >& /dev/null # only deleting tag of image; image will persist under its id
+                  docker image tag "${img_from_dest_ctr}" "$dest_img"  >& /dev/null
+                  docker image rm --force "${img_from_dest_ctr}"  >& /dev/null
+              fi     
+              # cleanup container
+              #docker container kill -s 9 "$dest_ctr"
+              docker container rm --force "$dest_ctr"  >& /dev/null
+          fi
+      else
+          echo "ERROR: unknown mode '$mode'" >&2
+          exit 1
+      fi
+  fi
+}
+
+# private function 
+__get_mode() {
+  set -eE
+    local mode
+    readonly location="$1"
+
+    if [[ $location == *://* ]]
+    then
+      mode="${location%://*}"
+    else
+      if [[ $location == *:* ]]
+      then
+        mode="ssh"
+      else
+        mode="local"
+      fi
+    fi
+
+    printf $mode 
+}       
+
+mirror "$@"

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+mirror --dry-run -i "$@"
