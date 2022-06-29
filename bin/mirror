@@ -223,7 +223,7 @@ mirror() {
   #  -l, --links                 copy symlinks as symlinks
   #  -t, --times                 preserve times
 
-  local options=() 
+  local options=( "--no-warn" ) # options used for recursive call to mirror in which we skip warning 
   local dry_run_option=""
   local file_option="false"
   local give_warning="true"
