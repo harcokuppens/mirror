@@ -45,6 +45,7 @@ Requirements:
 
 * `bash` shell
 * `rsync` tool
+* `pager` tool, by default installed on most systems and set to `less`
 * `ssh` tool, only needed for mirroring to/from remote machine
 * `docker` tool, only needed for mirroring to/from docker image/container
 

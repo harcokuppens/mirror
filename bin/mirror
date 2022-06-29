@@ -1,7 +1,31 @@
 #!/bin/bash
 
+readonly USAGE="
+  mirror
+    local mode
+       mirror [OPTIONS] SOURCEDIR                               DESTDIR
+    ssh mode    
+       mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR              DESTDIR
+       mirror [OPTIONS] SOURCEDIR                               [ssh://]HOSTNAME:DESTDIR
+    docker mode    
+       mirror [OPTIONS] docker://CONTAINERNAME:SOURCEDIR        DESTDIR
+       mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
+       mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
+       mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
+    
+  diffdir 
+       diffdir == mirror --dry-run -i
+    
+  More documentation
+    * mirror --help
+    * https://github.com/harcokuppens/mirror
+"
 
-readonly USAGE=" 
+readonly HELP=" 
+NAME
+  mirror  - mirror local/remote directories 
+  diffdir - query difference local/remote directories
+
 DESCRIPTION
   The mirror command synchronises contents of sourcedir into  destdir
   where either sourcedir or destdir may be a directory
@@ -25,22 +49,7 @@ DESCRIPTION
   The diffdir command is just 'mirror --dry-run -i' to quickly find
   the difference between sourcedir into  destdir. 
   
-
-USAGE 
-  local mode
-     mirror [OPTIONS] SOURCEDIR                               DESTDIR
-  ssh mode    
-     mirror [OPTIONS] [ssh://]HOSTNAME:SOURCEDIR              DESTDIR
-     mirror [OPTIONS] SOURCEDIR                               [ssh://]HOSTNAME:DESTDIR
-  docker mode    
-     mirror [OPTIONS] docker://CONTAINERNAME:SOURCEDIR        DESTDIR
-     mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
-     mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
-     mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
-  
-  special diffdir mode
-     alias diffdir =  'mirror --dry-run -i'
-     
+$USAGE 
 
 OPTIONS
    -a            to preserve all; meaning preserving also user,group,other and their permissions
@@ -186,6 +195,26 @@ debug()
     fi
 }
 
+get_pager() {
+  local PAGER="${PAGER=}"
+  if [[ -z "${PAGER}" ]]
+  then     
+      local PAGER
+      if which pager >& /dev/null
+      then
+        PAGER=pager
+      elif which less >& /dev/null
+      then    
+        PAGER=less
+      elif which more >& /dev/null
+      then
+        PAGER=more
+      else
+        PAGER=cat          
+      fi    
+  fi
+  printf "$PAGER"
+}
 
 mirror() {
   set -eE
@@ -217,7 +246,8 @@ mirror() {
       options+=( "$1" )
       if [[ "$1" == "--help" || "$1" == "-h" ]]
       then
-          echo "$USAGE"
+          local PAGER="$(get_pager)"
+          echo "$HELP" | $PAGER
           exit 0
       fi 
       if [[  "$1" == "-v" ||  "$1" == "-vv" ]]
