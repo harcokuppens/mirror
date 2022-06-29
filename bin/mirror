@@ -1,6 +1,7 @@
 #!/bin/bash
 
 readonly USAGE="
+USAGE:
   mirror
     local mode
        mirror [OPTIONS] SOURCEDIR                               DESTDIR
@@ -15,6 +16,7 @@ readonly USAGE="
     
   diffdir 
        diffdir == mirror --dry-run -i
+       shows itemize changes by default, but with 'diffdir -s' we get simplified diffdir output
     
   More documentation
     * mirror --help
@@ -48,7 +50,7 @@ DESCRIPTION
   
   The diffdir command is just 'mirror --dry-run -i' to quickly find
   the difference between sourcedir into  destdir. 
-  
+
 $USAGE 
 
 OPTIONS
@@ -82,6 +84,7 @@ OPTIONS
                            b) no change then '.' is printed
                            c) on a new file or directory '+' is printed
                  for more info: see man page of rsync      
+   -s            Simple diff; disable -i option.                  
    --keep-dest-only      
                  do not delete files on destination which are not in source   
    --no-git      excludes .git folder from mirroring; same as:  -f '- .git
@@ -140,8 +143,8 @@ set -u # script ends with signal EXIT when unset variable is used
        # also use "local" and "readonly" keywords to limit scope of declared variables
 set -o nounset;set -u
 # uncomment next two lines when developing; the EXIT trap is added for case the error message is forgotten 
-trap 'printf "\ntrap ERR errorcode:$? at linenumber:$LINENO  caused by \"${BASH_COMMAND}\"\n"' ERR
-trap 'errorcode=$? && command=${BASH_COMMAND} && [[ "$errorcode" != "0" ]] && printf "\ntrap EXIT errorcode:$errorcode at linenumber:$LINENO  caused by \"${command}\"\n"' EXIT
+#trap 'printf "\ntrap ERR errorcode:$? at linenumber:$LINENO  caused by \"${BASH_COMMAND}\"\n"' ERR
+#trap 'errorcode=$? && command=${BASH_COMMAND} && [[ "$errorcode" != "0" ]] && printf "\ntrap EXIT errorcode:$errorcode at linenumber:$LINENO  caused by \"${command}\"\n"' EXIT
 # uncomment next line when developing and you want to trace an error
 #set -x 
 
@@ -238,6 +241,7 @@ mirror() {
   local update_option=""
   local verbose_option=""
   local rsync_options=""
+  local simple_diff="false"
   
   
   
@@ -259,6 +263,12 @@ mirror() {
       if [[  "$1" == "-d" ]]
       then  
           DEBUG="true"
+          shift
+          continue
+      fi
+      if [[  "$1" == "-s" ]]
+      then  
+          simple_diff="true"
           shift
           continue
       fi
@@ -380,12 +390,25 @@ mirror() {
       echo "ERROR: unknown option '$1'" >&2
       exit 1   
   done   
+
+  # if activating dry-run option then show diff output ; if itemize option
+  # disabled then enable basic rsync verbose option (-v) which shows basic difference
   if [[ "$dry_run_option" != "" &&  "$itemize_option" == "" && "$verbose_option" == "" ]]
   then 
       echo "Note: verbose option (-v) is applied to show dry-run updates.">&2
       echo "      you can also use itemize option (-i) to show more details of the updates.">&2
       verbose_option="-v"    
-  fi          
+  fi         
+
+  # simple_diff option disables itemised diffdir
+  if [[ "$simple_diff" == "true"  ]]
+  then 
+      itemize_option=""    
+      if [[ "$verbose_option" == "" ]]
+      then 
+          verbose_option="-v"    
+      fi         
+  fi         
                 
   if [[  "$#" -ne "2" ]]
   then
