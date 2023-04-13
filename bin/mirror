@@ -13,6 +13,8 @@ USAGE:
        mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
        mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
        mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
+       mirror [OPTIONS] docker-vol://VOLUMENAME[:SOURCEDIR]     DESTDIR
+       mirror [OPTIONS] SOURCEDIR                               docker-vol://VOLUMENAME[:DESTDIR]       
     
   diffdir 
        diffdir == mirror --dry-run
@@ -28,9 +30,9 @@ NAME
   diffdir - query difference local/remote directories
 
 DESCRIPTION
-  The mirror command synchronises contents of sourcedir into  destdir
-  where either sourcedir or destdir may be a directory
-  on a remote machine, a docker container, or on a docker image.
+  The mirror command synchronises contents of sourcedir into destdir
+  where either sourcedir or destdir may be a directory on a remote 
+  machine, a docker container, a docker image or on a docker volume.
   Destination is updated to match source, including deleting 
   files if necessary.
 
@@ -414,36 +416,16 @@ mirror() {
       local source_mode dest_mode
       local source="$1"
       local dest="$2"
+      local remote=""
+      local remote_side="none"
       
-      if [[ "$give_warning" == "true" ]]
-      then   
-          local prompt
-          echo "We STRONGLY advice to do a 'dry-run' first (option -n), because mirroring"    
-          echo "can destroy the destination if you are not careful!"       
-          read -p "Are you sure you want to continue? <y/N> " prompt
-          if ! [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]
-          then
-            exit 0
-          fi
-      fi  
       debug  "source: $source"
       debug  "dest: $dest"
 
-      if [[ "$file_option" == "false" ]]
-      then
-          # ${x%/} removes trailing slash  => prevents getting // 
-          source="${source%/}/"
-          dest="${dest%/}/"
-          # explanation:
-          # rsync needs directory argument to be ended with '/' to mirror
-          # its content, otherwise it will also mirror the directory. 
-          # Latter we do not want, because is confusing.
-          # KISS: mirror does mirror contents of two directories"
-      fi 
       
       source_mode="$( __get_mode "$source" )"
       dest_mode=$( __get_mode "$dest" )
-      
+     
       if   [[ "$source_mode" != "local" && "$dest_mode" == "local" ]]
       then
           remote_side="source"
@@ -463,11 +445,72 @@ mirror() {
       else
           mode="local"
       fi
-      if [[ "$mode" != "local" && $remote != *:* ]]
+      if [[ "$mode" != "local" && "$mode" != "docker-vol" && "$remote" != *:* ]]
       then
-          echo "ERROR: incorrect remote location '$remote'" >&2
+          echo "ERROR: incorrect remote location '$mode://$remote'" >&2
           exit 1
       fi    
+     
+      # note: verify that directory is given in remote location
+      #       This is important because we are going to add a / to end of
+      #       directory, causing a non-specified directory to be become root '/' !!
+      local remote_dir
+      remote_dir=${remote##*:}
+      if [[ "$remote" != "" && "$remote_dir" == "" ]]
+      then 
+          if [[ "$file_option" == "false" ]]
+          then
+              echo "ERROR: incorrect remote location '$mode://$remote' : directory is missing" >&2
+          else     
+              echo "ERROR: incorrect remote location '$mode://$remote' : file is missing" >&2
+          fi    
+          exit 1
+      fi    
+
+      # make sure that source and dest directories end with / 
+      if [[ "$file_option" == "false" ]]
+      then
+          # ${x%/} removes trailing slash  => prevents getting // 
+          source="${source%/}/"
+          dest="${dest%/}/"
+          # explanation:
+          # rsync needs directory argument to be ended with '/' to mirror
+          # its content, otherwise it will also mirror the directory. 
+          # Latter we do not want, because is confusing.
+          # KISS: mirror does mirror contents of two directories"
+      fi 
+      
+      if [[  "$remote_side" == "dest" ]]
+      then
+          if [[ "$file_option" == "false" ]]
+          then
+              if [[ ! -d "$source" ]]
+              then
+                 echo "ERROR: incorrect source location '$source' : directory does not exist" >&2
+                 exit 1
+              fi   
+          else
+              if [[ ! -f "$source" ]]
+              then
+                 echo "ERROR: incorrect source location '$source' : file does not exist" >&2
+                 exit 1
+              fi   
+          fi    
+      fi    
+
+      if [[ "$give_warning" == "true" ]]
+      then   
+          local prompt
+          echo "We STRONGLY advice to do a 'dry-run' first (option -n), because mirroring"    
+          echo "can destroy the destination if you are not careful!"       
+          echo "Going to mirror:"
+          echo "    $source_mode://$source   =>   $dest_mode://$dest"
+          read -p "Are you sure you want to continue? <y/N> " prompt
+          if ! [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]
+          then
+            exit 0
+          fi
+      fi  
 
       if [[ "$mode" == "docker" || "$mode" == "ssh" ]]
       then     
@@ -521,7 +564,7 @@ mirror() {
           #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument)
           #     for remote_shell="":  NOTHING     (not an argument anymore)
           debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
-          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
+         # command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
       elif [[ "$mode" == "docker-img"  ]]
       then
 
@@ -530,6 +573,9 @@ mirror() {
               # mirror from docker image to local dir
 
               # source is specified as IMAGENAME[:TAG]:PATH
+              local source_img
+              local source_path
+              local source_ctr
               source_img="${source%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
               source_path="${source##*:}" # you get PATH by removing prefix till : greedy
 
@@ -582,6 +628,9 @@ mirror() {
               # mirror local dir into docker image    
 
               # dest is specified as IMAGENAME[:TAG]:PATH
+              local dest_img
+              local dest_path
+              local dest_ctr
               dest_img="${dest%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
               dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
 
@@ -650,6 +699,117 @@ mirror() {
                   docker image tag "${img_from_dest_ctr}" "$dest_img"  >& /dev/null
                   docker image rm --force "${img_from_dest_ctr}"  >& /dev/null
               fi     
+              # cleanup container
+              #docker container kill -s 9 "$dest_ctr"
+              docker container rm --force "$dest_ctr"  >& /dev/null
+          fi
+      elif [[ "$mode" == "docker-vol"  ]]
+      then
+
+          if [[ "$remote_side" == "source"  ]]
+          then 
+              # mirror from docker volume to local dir
+
+              local source_vol
+              local source_img
+              local source_ctr
+              # source is specified as VOLUMENAME
+              # note strip / we added earlier
+              source_vol="${source%/}"
+             
+
+              # source is specified as VOLUMENAME[:PATH]
+              local source_img
+              local source_path
+              local source_ctr
+              source_img="${source%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+              source_path="${source##*:}" # you get PATH by removing prefix till : greedy
+
+
+              if [[ -z $(docker volume ls -qf name="^$source_vol\$") ]]
+              then 
+                  echo "ERROR: docker volume '$source_vol' doesn't exist" >&2
+                  exit 1
+                  exit
+              fi
+
+              # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
+              source_img="alpinelinux/rsyncd"
+              
+
+              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
+              # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
+              source_ctr="ctr_dummy_source_vol_${source_vol}"
+              if [[ $(docker_check_container_exist "$source_ctr") == "true" ]] 
+              then
+                 docker container rm -f "$source_ctr"
+              fi
+              # note: we use bash -c to run multiple commands to first echo what cmd we
+              #       apply to image which is shown in docker history of image, then
+              #       we replace bash process with sleep infinity process, so that only
+              #       one process is running in image. All processes run should effect
+              #       the filesystem.
+              docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/"  --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror ${options[@]:+"${options[@]}"} docker-vol://$source_vol $dest"  >& /dev/null
+              #docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/" --entrypoint="" "$source_img" bash -c "exec sleep infinity # mirror ${options[@]:+"${options[@]}"} docker-vol://$source_vol $dest"  >& /dev/null
+              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
+              #  echo "${options[@]}" => options[@]: unbound variable if no options give
+              #  echo ${options[@]+"${options[@]}"}  => fix!
+              #  # where ${parameter:+word} If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
+                            
+              # mirror from volume's /data dir in container
+              debug mirror from volume /data dir in container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/" "$dest" 
+              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/" "$dest" 
+              
+              # cleanup container
+              #docker container kill -s 9 "$source_ctr"
+              docker container rm -f "$source_ctr"  >& /dev/null
+          else
+              # mirror local dir into docker volume    
+
+              local dest_vol
+              local dest_img
+              local dest_ctr
+              # dest is specified as VOLUMENAME 
+              # note strip / we added earlier
+              dest_vol="${dest%/}"
+
+              if [[ -z $(docker volume ls -qf name="^$dest_vol\$") ]]
+              then 
+                  echo "ERROR: docker volume '$dest_vol' doesn't exist" >&2
+                  exit 1
+                  exit
+              fi
+
+
+              # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
+              dest_img="alpinelinux/rsyncd"
+              
+
+
+              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
+              dest_ctr="ctr_dummy_dest_vol_${dest_vol}"
+              if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]] 
+              then
+                 docker container rm -f "$dest_ctr"  >& /dev/null
+              fi
+             
+              # note: we use bash -c to run multiple commands to first echo what cmd we
+              #       apply to image which is shown in docker history of image, then
+              #       we replace bash process with sleep infinity process, so that only
+              #       one process is running in image. All processes run should effect
+              #       the filesystem.
+              docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]+"${options[@]}"} $source docker-vol://$dest_vol"  >& /dev/null
+              #docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" bash -c "exec sleep infinity # mirror ${options[@]+"${options[@]}"} $source docker-vol://$dest_vol"  >& /dev/null
+              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
+              #  echo "${options[@]}" => options[@]: unbound variable if no options give
+              #  echo ${options[@]+"${options[@]}"}  => fix!
+              
+              # mirror into volume's /data/ dir in container
+              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/" 
+              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/" 
+            
               # cleanup container
               #docker container kill -s 9 "$dest_ctr"
               docker container rm --force "$dest_ctr"  >& /dev/null
