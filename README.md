@@ -50,7 +50,7 @@ Requirements:
 * `bash` shell
 * `rsync` tool
 * `ssh` tool, only needed for mirroring to/from remote machine
-* `docker` tool, only needed for mirroring to/from docker image/container
+* `docker` tool, only needed for mirroring to/from docker image/container/volume
 
 Note when mirroring into a docker container/image, then the container/image must have `rsync`
 installed. When mirroring into a docker image then the image also must have `sh`, `exec`,
