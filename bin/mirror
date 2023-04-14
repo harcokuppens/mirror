@@ -445,13 +445,33 @@ mirror() {
       else
           mode="local"
       fi
-      if [[ "$mode" != "local" && "$mode" != "docker-vol" && "$remote" != *:* ]]
+
+
+      # a docker volume remote can be specified as docker-vol://VOLUMENAME[:PATH]
+      # translate docker-vol://VOLUMENAME to docker-vol://VOLUMENAME:/
+      if [[  "$mode" == "docker-vol" && "$remote" != *:* ]]
+      then
+          # remote is specified as VOLUMENAME
+          # so we add :/
+          remote="${remote}:/"
+          if [[ "$source_mode" == "local" ]]
+          then 
+              # dest is a volume remote and must be adapted
+              dest="${dest}:/"
+          else
+              # source is a volume remote and must be adapted
+              source="${source}:/"
+          fi 
+      fi
+
+
+      if [[ "$mode" != "local" &&  "$remote" != *:* ]]
       then
           echo "ERROR: incorrect remote location '$mode://$remote'" >&2
           exit 1
       fi    
      
-      # note: verify that directory is given in remote location
+      # note: verify that directory is specified in remote location (not empty string)
       #       This is important because we are going to add a / to end of
       #       directory, causing a non-specified directory to be become root '/' !!
       local remote_dir
@@ -564,7 +584,7 @@ mirror() {
           #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument)
           #     for remote_shell="":  NOTHING     (not an argument anymore)
           debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
-         # command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
+          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
       elif [[ "$mode" == "docker-img"  ]]
       then
 
@@ -606,22 +626,20 @@ mirror() {
               then
                  docker container rm -f "$source_ctr"
               fi
-              # note: we use bash -c to run multiple commands to first echo what cmd we
+              
+              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
+              # note: we use sh -c to run multiple commands to first echo what cmd we
               #       apply to image which is shown in docker history of image, then
-              #       we replace bash process with sleep infinity process, so that only
+              #       we replace the sh process with sleep infinity process, so that only
               #       one process is running in image. All processes run should effect
               #       the filesystem.
-              docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" bash -c "exec sleep infinity # mirror  ${options[@]:+"${options[@]}"} docker-img://$source_img:$source_path $dest"  >& /dev/null
-              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
-              #  echo "${options[@]}" => options[@]: unbound variable if no options give
-              #  echo ${options[@]+"${options[@]}"}  => fix!
-              #  # where ${parameter:+word} If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
+              docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror  ${options[@]} docker-img://$source_img:$source_path $dest"  >& /dev/null
                             
               # mirror from container
               debug mirror from container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
               mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
               
-              # cleanup container
+              # cleanup dummy container
               #docker container kill -s 9 "$source_ctr"
               docker container rm -f "$source_ctr"  >& /dev/null
           else
@@ -667,15 +685,13 @@ mirror() {
                  docker container rm -f "$dest_ctr"  >& /dev/null
               fi
              
-              # note: we use bash -c to run multiple commands to first echo what cmd we
+              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
+              # note: we use sh -c to run multiple commands to first echo what cmd we
               #       apply to image which is shown in docker history of image, then
-              #       we replace bash process with sleep infinity process, so that only
+              #       we replace the sh process with sleep infinity process, so that only
               #       one process is running in image. All processes run should effect
               #       the filesystem.
-              docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" bash -c "exec sleep infinity # mirror ${options[@]+"${options[@]}"} $source docker-img://$dest_img:$dest_path"  >& /dev/null
-              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
-              #  echo "${options[@]}" => options[@]: unbound variable if no options give
-              #  echo ${options[@]+"${options[@]}"}  => fix!
+              docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]} $source docker-img://$dest_img:$dest_path"  >& /dev/null
               
               # mirror into container
               debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:$dest_path" 
@@ -699,7 +715,7 @@ mirror() {
                   docker image tag "${img_from_dest_ctr}" "$dest_img"  >& /dev/null
                   docker image rm --force "${img_from_dest_ctr}"  >& /dev/null
               fi     
-              # cleanup container
+              # cleanup dummy container
               #docker container kill -s 9 "$dest_ctr"
               docker container rm --force "$dest_ctr"  >& /dev/null
           fi
@@ -710,22 +726,12 @@ mirror() {
           then 
               # mirror from docker volume to local dir
 
+              # source is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
               local source_vol
-              local source_img
-              local source_ctr
-              # source is specified as VOLUMENAME
-              # note strip / we added earlier
-              source_vol="${source%/}"
-             
-
-              # source is specified as VOLUMENAME[:PATH]
-              local source_img
               local source_path
-              local source_ctr
-              source_img="${source%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+              source_vol="${source%:*}"  # you get VOLUMENAME by removing suffix till : none-greedy
               source_path="${source##*:}" # you get PATH by removing prefix till : greedy
-
-
+             
               if [[ -z $(docker volume ls -qf name="^$source_vol\$") ]]
               then 
                   echo "ERROR: docker volume '$source_vol' doesn't exist" >&2
@@ -745,34 +751,27 @@ mirror() {
               then
                  docker container rm -f "$source_ctr"
               fi
-              # note: we use bash -c to run multiple commands to first echo what cmd we
-              #       apply to image which is shown in docker history of image, then
-              #       we replace bash process with sleep infinity process, so that only
-              #       one process is running in image. All processes run should effect
-              #       the filesystem.
-              docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/"  --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror ${options[@]:+"${options[@]}"} docker-vol://$source_vol $dest"  >& /dev/null
-              #docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/" --entrypoint="" "$source_img" bash -c "exec sleep infinity # mirror ${options[@]:+"${options[@]}"} docker-vol://$source_vol $dest"  >& /dev/null
-              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
-              #  echo "${options[@]}" => options[@]: unbound variable if no options give
-              #  echo ${options[@]+"${options[@]}"}  => fix!
-              #  # where ${parameter:+word} If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
+
+              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
+              docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/"  --entrypoint="" "$source_img" sh -c "exec sleep 10000d"  >& /dev/null
                             
               # mirror from volume's /data dir in container
-              debug mirror from volume /data dir in container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/" "$dest" 
-              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/" "$dest" 
+              debug mirror from volume /data dir in container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/$source_path" "$dest" 
+              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/$source_path" "$dest" 
               
-              # cleanup container
+              # cleanup dummy container
               #docker container kill -s 9 "$source_ctr"
               docker container rm -f "$source_ctr"  >& /dev/null
           else
               # mirror local dir into docker volume    
 
+              # dest is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
               local dest_vol
-              local dest_img
-              local dest_ctr
-              # dest is specified as VOLUMENAME 
-              # note strip / we added earlier
-              dest_vol="${dest%/}"
+              local dest_path
+              dest_vol="${dest%:*}"  # you get VOLUMENAME by removing suffix till : none-greedy
+              dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
+              debug "dest_vol=$dest_vol"
+              debug "dest_path=$dest_path"
 
               if [[ -z $(docker volume ls -qf name="^$dest_vol\$") ]]
               then 
@@ -795,22 +794,14 @@ mirror() {
                  docker container rm -f "$dest_ctr"  >& /dev/null
               fi
              
-              # note: we use bash -c to run multiple commands to first echo what cmd we
-              #       apply to image which is shown in docker history of image, then
-              #       we replace bash process with sleep infinity process, so that only
-              #       one process is running in image. All processes run should effect
-              #       the filesystem.
-              docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]+"${options[@]}"} $source docker-vol://$dest_vol"  >& /dev/null
-              #docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" bash -c "exec sleep infinity # mirror ${options[@]+"${options[@]}"} $source docker-vol://$dest_vol"  >& /dev/null
-              # note see https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u
-              #  echo "${options[@]}" => options[@]: unbound variable if no options give
-              #  echo ${options[@]+"${options[@]}"}  => fix!
+              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
+              docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d"  >& /dev/null
               
               # mirror into volume's /data/ dir in container
-              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/" 
-              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/" 
+              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/${dest_path}" 
+              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/${dest_path}" 
             
-              # cleanup container
+              # cleanup dummy container
               #docker container kill -s 9 "$dest_ctr"
               docker container rm --force "$dest_ctr"  >& /dev/null
           fi

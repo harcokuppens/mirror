@@ -3,9 +3,9 @@ Mirror synchronises contents of sourcedir into  destdir which can be on a remote
 
 ## Description
 
-The `mirror` command synchronises contents of sourcedir into  destdir
-where either sourcedir or destdir may be a directory
-on a remote machine, a docker container, or on a docker image.
+The `mirror` command synchronises contents of sourcedir into destdir
+where either sourcedir or destdir may be a directory on a remote 
+machine, a docker container, a docker image or on a docker volume.
 Destination is updated to match source, including deleting 
 files if necessary.
 
@@ -36,7 +36,7 @@ is done quietly without anything reported.
 The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
 
 
-    VERSION="v1.0.0" 
+    VERSION="v1.1.0" 
     INSTALL_DIR=/usr/local/bin # make sure INSTALL_DIR is in your PATH environment variable
     DOWNLOAD_URL="https://raw.githubusercontent.com/harcokuppens/mirror/${VERSION}/bin/"
     curl -Lo ${INSTALL_DIR}/mirror  "$DOWNLOAD_URL/mirror"
@@ -51,6 +51,10 @@ Requirements:
 * `rsync` tool
 * `ssh` tool, only needed for mirroring to/from remote machine
 * `docker` tool, only needed for mirroring to/from docker image/container
+
+Note when mirroring into a docker container/image, then the container/image must have `rsync`
+installed. When mirroring into a docker image then the image also must have `sh`, `exec`,
+and `sleep` installed.
 
       
 For Windows you could use WSL to run the `mirror` utility. You can also install the `mirror` utility with [cygwin](https://cygwin.org) to get a bash shell to run the script.     
@@ -70,6 +74,8 @@ For Windows you could use WSL to run the `mirror` utility. You can also install 
          mirror [OPTIONS] SOURCEDIR                               docker://CONTAINERNAME:DESTDIR
          mirror [OPTIONS] docker-img://IMAGENAME[:TAG]:SOURCEDIR  DESTDIR
          mirror [OPTIONS] SOURCEDIR                               docker-img://IMAGENAME[:TAG]:DESTDIR
+         mirror [OPTIONS] docker-vol://VOLUMENAME[:SOURCEDIR]     DESTDIR
+         mirror [OPTIONS] SOURCEDIR                               docker-vol://VOLUMENAME[:DESTDIR]       
       
     diffdir 
          diffdir == mirror --dry-run
