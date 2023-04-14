@@ -140,7 +140,7 @@ NOTES
   is created for the image. After mirroring on the container is done a 
   modified image is extracted from the container. (using 'docker commit')
   
-  For a remote using `docker-vol://` we use a docker volume as remote, 
+  For a remote using docker-vol:// we use a docker volume as remote, 
   but because we can only rsync into a running container a dummy container
   is created which mounts the volume. After mirroring on the volume mount 
   location in the dummy container is done, we can stop and delete the 
