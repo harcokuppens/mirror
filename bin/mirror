@@ -613,15 +613,19 @@ mirror() {
               fi
 
               image=$source_img
-              if ! docker run --rm  --entrypoint="" $image which echo >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'echo' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
-              image=$source_img
               if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
               then     
                   echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                  exit 1
+              fi    
+              if ! docker run --rm  --entrypoint="" $image which sh >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
+                  exit 1
+              fi    
+              if ! docker run --rm  --entrypoint="" $image which sleep >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
                   exit 1
               fi    
 
@@ -629,6 +633,8 @@ mirror() {
               # container names is image name with tag removed and prefixed with "ctr_dummy_" 
               # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
               source_ctr="ctr_dummy_${source_img%:*}"
+              # slash is allowed in image name but not in container name, so escape it
+              source_ctr=$(echo $source_ctr| tr '/' '7')
               if [[ $(docker_check_container_exist "$source_ctr") == "true" ]] 
               then
                  docker container rm -f "$source_ctr"
@@ -673,20 +679,27 @@ mirror() {
               #  fi           
 
               image=$dest_img
-              if ! docker run --rm  --entrypoint="" $image which echo >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'echo' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
               if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
               then     
                   echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                  exit 1
+              fi    
+              if ! docker run --rm  --entrypoint="" $image which sh >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
+                  exit 1
+              fi    
+              if ! docker run --rm  --entrypoint="" $image which sleep >& /dev/null
+              then     
+                  echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
                   exit 1
               fi    
 
               # create dummy container does "sleep infinity" which shouldn't effect the filesystem
               # container names is image name with tag removed and prefixed with "ctr_dummy_" 
               dest_ctr="ctr_dummy_${dest_img%:*}"
+              # slash is allowed in image name but not in container name, so escape it
+              dest_ctr=$(echo $dest_ctr| tr '/' '7')
               if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]] 
               then
                  docker container rm -f "$dest_ctr"  >& /dev/null
