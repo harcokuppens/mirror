@@ -35,10 +35,10 @@ is done quietly without anything reported.
 
 The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
 
-
-    VERSION="v1.1.0" 
+    REPO="harcokuppens/mirror" 
+    LATEST_TAG="$(curl -s https://api.github.com/repos/${REPO}/releases/latest | jq -r '.tag_name')"
     INSTALL_DIR=/usr/local/bin # make sure INSTALL_DIR is in your PATH environment variable
-    DOWNLOAD_URL="https://raw.githubusercontent.com/harcokuppens/mirror/${VERSION}/bin/"
+    DOWNLOAD_URL="https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/bin/"
     curl -Lo ${INSTALL_DIR}/mirror  "$DOWNLOAD_URL/mirror"
     chmod a+x ${INSTALL_DIR}/mirror
     curl -Lo ${INSTALL_DIR}/diffdir  "$DOWNLOAD_URL/diffdir"
