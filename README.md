@@ -33,7 +33,7 @@ is done quietly without anything reported.
 ## Installation 
 
 
-The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch it for a specific version from github:
+The `mirror` and `diffdir` commands are simple scripts in `bash`, so you can easily fetch the latest release version from github:
 
     REPO="harcokuppens/mirror" 
     LATEST_TAG="$(curl -s https://api.github.com/repos/${REPO}/releases/latest | jq -r '.tag_name')"
