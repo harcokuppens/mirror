@@ -335,8 +335,9 @@ mirror() {
       fi    
       if [[  "$1" == "-f" || "$1" == "--filter" ]]
       then 
-         filter_option="-f '$2'"
-         options+=( "$2" ) 
+         filter_option="$2"
+         options+=( "-f" ) 
+         options+=( "$filter_option" ) 
          shift 2
          continue
       fi    
@@ -590,8 +591,8 @@ mirror() {
           #   gives
           #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument)
           #     for remote_shell="":  NOTHING     (not an argument anymore)
-          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
-          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder $filter_option $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} $source $dest
+          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder -f "$filter_option" $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} "$source" "$dest"
+          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder -f "$filter_option" $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} "$source" "$dest"
       elif [[ "$mode" == "docker-img"  ]]
       then
 
