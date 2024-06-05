@@ -57,7 +57,7 @@ installed. When mirroring into a docker image then the image also must have `sh`
 and `sleep` installed.
 
       
-For Windows you could use WSL to run the `mirror` utility. You can also install the `mirror` utility with [cygwin](https://cygwin.org) to get a bash shell to run the script.     
+For Windows you could use WSL to run the `mirror` utility. You can also install the `mirror` utility with [cygwin](https://cygwin.org) or [gitforwindows](https://gitforwindows.org) to get a bash shell to run the script.     
 	    
 	    
 ## Usage 
