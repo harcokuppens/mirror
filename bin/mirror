@@ -1,4 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Require Bash version 5.0 or higher
+if (( BASH_VERSINFO[0] < 5 )); then
+    echo "Error: This script requires Bash 5.0 or higher. You are using Bash ${BASH_VERSION}."
+    exit 1
+fi 
 
 readonly USAGE="
 USAGE:
@@ -160,7 +165,7 @@ set -eE  # BEST: traps error in subshell with right linenumber in code
        #                    `-> runs in subshell
 set -u # script ends with signal EXIT when unset variable is used
        # also use "local" and "readonly" keywords to limit scope of declared variables
-set -o nounset;set -u
+
 # uncomment next two lines when developing; the EXIT trap is added for case the error message is forgotten 
 #trap 'printf "\ntrap ERR errorcode:$? at linenumber:$LINENO  caused by \"${BASH_COMMAND}\"\n"' ERR
 #trap 'errorcode=$? && command=${BASH_COMMAND} && [[ "$errorcode" != "0" ]] && printf "\ntrap EXIT errorcode:$errorcode at linenumber:$LINENO  caused by \"${command}\"\n"' EXIT
@@ -252,8 +257,7 @@ mirror() {
   local recursive_option="-r"
   local filter_options=()
   local itemize_option=""
-  local remote_shell_option=""
-  local remote_shell=""
+  local remote_shell_option=()
   local exclude_git_folder=""
   local delete_option="--delete"
   local trigger_option=""
@@ -552,11 +556,9 @@ mirror() {
                   echo "ERROR: docker container '$container' does not contain 'rsync' which is required!" >&2
                   exit 1
               fi    
-              remote_shell_option="-e"
-              remote_shell="docker exec -i"
+              remote_shell_option+=("-e" "docker exec -i")
           else    
-              remote_shell_option="-e"
-              remote_shell="ssh"
+              remote_shell_option+=("-e" "ssh")
           fi    
       fi    
 
@@ -580,20 +582,9 @@ mirror() {
       fi            
 
       if [[ "$mode" == "local" || "$mode" == "docker" || "$mode" == "ssh" ]]
-      then           
-          # problem:
-          #   "$remote_shell"
-          #   gives
-          #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument => WHAT we WANT!)
-          #     for remote_shell="":  ""     (WITH the " included in output, so command called sees "" as one argument  => PROBLEM: "" is interpreted as srcdir in below command!
-          #  => problem is that when having no remote shell it is still seen as argument because it is substituted as ""
-          # fix by using: ${parameter:+word}. If parameter is null or unset, nothing is substituted, otherwise the expansion of word is substituted.
-          #   ${remote_shell:+"$remote_shell"}
-          #   gives
-          #     for remote_shell="docker exec -i":  "docker exec -i"      (WITH the " included in output, so command called sees "docker exec -i" as one argument)
-          #     for remote_shell="":  NOTHING     (not an argument anymore)
-          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder ${filter_options[@]+"${filter_options[@]}"} $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} "$source" "$dest"
-          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder ${filter_options[@]+"${filter_options[@]}"}  $recursive_option $update_option $verbose_option -${preserve}z $remote_shell_option ${remote_shell:+"$remote_shell"} "$source" "$dest"
+      then          
+          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}" $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
+          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}"  $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
       elif [[ "$mode" == "docker-img"  ]]
       then
 
@@ -651,8 +642,8 @@ mirror() {
               docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror  ${options[@]} docker-img://$source_img:$source_path $dest"  >& /dev/null
                             
               # mirror from container
-              debug mirror from container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
-              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:$source_path" "$dest" 
+              debug mirror from container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest" 
+              mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest" 
               
               # cleanup dummy container
               #docker container kill -s 9 "$source_ctr"
@@ -716,8 +707,8 @@ mirror() {
               docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]} $source docker-img://$dest_img:$dest_path"  >& /dev/null
               
               # mirror into container
-              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:$dest_path" 
-              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:$dest_path" 
+              debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path" 
+              mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path" 
             
               debug "run diff"
               if [[  "$(docker container diff $dest_ctr)" == "" ]]
@@ -778,8 +769,8 @@ mirror() {
               docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/"  --entrypoint="" "$source_img" sh -c "exec sleep 10000d"  >& /dev/null
                             
               # mirror from volume's /data dir in container
-              debug mirror from volume /data dir in container to local dir:\n mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/$source_path" "$dest" 
-              mirror ${options[@]+"${options[@]}"} "docker://$source_ctr:/data/$source_path" "$dest" 
+              debug mirror from volume /data dir in container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest" 
+              mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest" 
               
               # cleanup dummy container
               #docker container kill -s 9 "$source_ctr"
@@ -820,8 +811,8 @@ mirror() {
               docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d"  >& /dev/null
               
               # mirror into volume's /data/ dir in container
-              debug mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/${dest_path}" 
-              mirror ${options[@]+"${options[@]}"} "$source" "docker://${dest_ctr}:/data/${dest_path}" 
+              debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}" 
+              mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}" 
             
               # cleanup dummy container
               #docker container kill -s 9 "$dest_ctr"
