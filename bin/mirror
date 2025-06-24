@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Require Bash version 5.0 or higher
-if (( BASH_VERSINFO[0] < 5 )); then
+if ((BASH_VERSINFO[0] < 5)); then
     echo "Error: This script requires Bash 5.0 or higher. You are using Bash ${BASH_VERSION}."
     exit 1
-fi 
+fi
 
 readonly USAGE="
 USAGE:
@@ -102,8 +102,9 @@ OPTIONS
                 then give both options explicit.
   --keep-dest-only      
                 do not delete files on destination which are not in source   
-  --no-git      excludes .git folder from mirroring; same as:  -f '- .git
-  --no-warn     do not warn about the risks, but directly do the mirror
+  --no-git      excludes .git folder from mirroring; same as:  -f '- .git 
+  --no-warn or -y 
+                do not warn about the risks, but directly do the mirror
   -t TRIGGER   
   --trigger TRIGGER   
                 The trigger option determines how it is determined whether a file must be
@@ -154,696 +155,613 @@ NOTES
 "
 
 # make script exit early on errors
-set -eE  # BEST: traps error in subshell with right linenumber in code
-       # -e  Exit immediately if a command exits with a non-zero status.
-       # -E  If set, the ERR trap is inherited by shell functions.
-       # We set this also for every function, because when in subshells
-       # set -eE is not inherited. By setting it in every function we
-       # sure it is enabled again. (set -u and set -x is always inherited in subshells)
-       # e.g. when calling a function in command substition
-       #   manifest_digest=$(get_manifest_digest_for_a_tag_for_a_specific_os_arch "$image" "$tag")
-       #                    `-> runs in subshell
+set -eE # BEST: traps error in subshell with right linenumber in code
+# -e  Exit immediately if a command exits with a non-zero status.
+# -E  If set, the ERR trap is inherited by shell functions.
+# We set this also for every function, because when in subshells
+# set -eE is not inherited. By setting it in every function we
+# sure it is enabled again. (set -u and set -x is always inherited in subshells)
+# e.g. when calling a function in command substition
+#   manifest_digest=$(get_manifest_digest_for_a_tag_for_a_specific_os_arch "$image" "$tag")
+#                    `-> runs in subshell
 set -u # script ends with signal EXIT when unset variable is used
-       # also use "local" and "readonly" keywords to limit scope of declared variables
+# also use "local" and "readonly" keywords to limit scope of declared variables
 
-# uncomment next two lines when developing; the EXIT trap is added for case the error message is forgotten 
+# uncomment next two lines when developing; the EXIT trap is added for case the error message is forgotten
 #trap 'printf "\ntrap ERR errorcode:$? at linenumber:$LINENO  caused by \"${BASH_COMMAND}\"\n"' ERR
 #trap 'errorcode=$? && command=${BASH_COMMAND} && [[ "$errorcode" != "0" ]] && printf "\ntrap EXIT errorcode:$errorcode at linenumber:$LINENO  caused by \"${command}\"\n"' EXIT
 # uncomment next line when developing and you want to trace an error
-#set -x 
-
-
+#set -x
 
 docker_check_container_exist() {
     set -eE
     local ctr="$1"
-    local result=$(docker container ls -q --filter "name=$ctr" )
-	if [[ -z "$result" ]] ;
-	then
-	   printf "false"
-    else   
-	   printf "true"
-	fi
-}    
+    local result=$(docker container ls -q --filter "name=$ctr")
+    if [[ -z "$result" ]]; then
+        printf "false"
+    else
+        printf "true"
+    fi
+}
 
 docker_check_image_exist() {
     set -eE
     local img="$1"
     local result=$(docker image ls -q $img)
-	if [[ -z "$result" ]] ;
-	then
-	   printf "false"
-    else   
-	   printf "true"
-	fi
+    if [[ -z "$result" ]]; then
+        printf "false"
+    else
+        printf "true"
+    fi
 }
 
-
 DEBUG="false"
-debug()
-{
+debug() {
     # we loop over arguments because in "$@" the empty "" arguments are lost
-    # we print each argument in '' because an argument can contain spaces or other things 
-    # the shell can interpret again. Note: on passing the arguments are already interpreted 
+    # we print each argument in '' because an argument can contain spaces or other things
+    # the shell can interpret again. Note: on passing the arguments are already interpreted
     # by the shell, and withing the '' quotes is what really is passed to the command.
     # So you can directly execute the output of the debug command.
     if [[ "$DEBUG" == "true" ]]; then
         local numarg=0
         totalargs=$#
         printf "debug: " >&2
-        while [[ "$numarg" != "$totalargs" ]]
-        do
-            numarg=$((numarg+1)) 
+        while [[ "$numarg" != "$totalargs" ]]; do
+            numarg=$((numarg + 1))
             #echo "value numarg: '$numarg'"
             #echo "value \$numarg: '${!numarg}'"
             printf "'${!numarg}' " >&2
-        done    
+        done
         printf "\n" >&2
     fi
 }
 
 get_pager() {
-  local PAGER="${PAGER=}"
-  if [[ -z "${PAGER}" ]]
-  then     
-      local PAGER
-      if which pager >& /dev/null
-      then
-        PAGER=pager
-      elif which less >& /dev/null
-      then    
-        PAGER=less
-      elif which more >& /dev/null
-      then
-        PAGER=more
-      else
-        PAGER=cat          
-      fi    
-  fi
-  printf "$PAGER"
+    local PAGER="${PAGER=}"
+    if [[ -z "${PAGER}" ]]; then
+        local PAGER
+        if which pager >&/dev/null; then
+            PAGER=pager
+        elif which less >&/dev/null; then
+            PAGER=less
+        elif which more >&/dev/null; then
+            PAGER=more
+        else
+            PAGER=cat
+        fi
+    fi
+    printf "$PAGER"
 }
 
 mirror() {
-  set -eE
-  local preserve="lt"  
-  # so we preserve by default
-  #  -l, --links                 copy symlinks as symlinks
-  #  -t, --times                 preserve times
+    set -eE
+    local preserve="lt"
+    # so we preserve by default
+    #  -l, --links                 copy symlinks as symlinks
+    #  -t, --times                 preserve times
 
-  local options=( "--no-warn" ) # options used for recursive call to mirror in which we skip warning 
-  local dry_run_option=""
-  local file_option="false"
-  local give_warning="true"
-  local recursive_option="-r"
-  local filter_options=()
-  local itemize_option=""
-  local remote_shell_option=()
-  local exclude_git_folder=""
-  local delete_option="--delete"
-  local trigger_option=""
-  local update_option=""
-  local verbose_option=""
-  local rsync_options=""
-  local quiet_option="false"
-  
-  
-  
-  while [[ "$#" > 0 && "$1" == -* ]]
-  do   
-      options+=( "$1" )
-      if [[ "$1" == "--help" || "$1" == "-h" ]]
-      then
-          local PAGER="$(get_pager)"
-          echo "$HELP" | $PAGER
-          exit 0
-      fi 
-      if [[  "$1" == "-v" ||  "$1" == "-vv" ]]
-      then  
-          verbose_option="$1"
-          shift
-          continue
-      fi
-      if [[  "$1" == "--debug" ]]
-      then  
-          DEBUG="true"
-          shift
-          continue
-      fi
-      if [[  "$1" == "-q" ]]
-      then  
-          quiet_option="true"
-          shift
-          continue
-      fi
-      if [[  "$1" == "-i" ]]
-      then  
-          shift
-          itemize_option="-i"
-          continue
-      fi           
-      if [[  "$1" == "-a" ]]
-      then  
-         shift # remove first argument
-         preserve="a"
-         #        -a, --archive
-         #            This is equivalent to -rlptgoD. It is a quick way of saying you want recursion and want to preserve almost everything 
-         #            => adds options pogD extra (compared with rtl)
-         # 
-         #         -p, --perms                 preserve permissions
-         #         -o, --owner                 preserve owner (super-user only)
-         #         -g, --group                 preserve group  
-         #         -D                          same as --devices --specials
-         #         --devices                   preserve device files (super-user only)
-         #         --specials                  preserve special files
-         continue
-      fi    
-      if [[  "$1" == "--keep-dest-only" ]]
-      then 
-         shift
-         delete_option=""
-         continue
-      fi    
-      if [[  "$1" == "--dry-run" || "$1" == "-n" ]]
-      then 
-         shift
-         dry_run_option="--dry-run"
-         give_warning="false"
-         continue
-      fi    
-      if [[  "$1" == "--file" ]]
-      then 
-         file_option="true"
-         recursive_option=""
-         shift 1
-         continue
-      fi    
-      if [[  "$1" == "-f" || "$1" == "--filter" ]]
-      then 
-         filter_options+=( "-f" ) 
-         filter_options+=( "$2" )
-         options+=( "-f" ) 
-         options+=( "$2" ) 
-         shift 2
-         continue
-      fi    
-      if [[  "$1" == "--no-git" ]]
-      then   
-         shift
-         #  --exclude=PATTERN 
-         exclude_git_folder="--exclude=.git"
-         continue
-      fi    
-      if [[  "$1" == "--no-warn" ]]
-      then   
-         shift
-         give_warning="false"
-         continue
-      fi 
-      if [[  "$1" == "--trigger" || "$1" == "-t" ]]
-      then 
-         interface_trigger_option="$2"
-         options+=( "$2" ) 
-         shift 2
-         case "$interface_trigger_option" in
+    local options=("--no-warn") # options used for recursive call to mirror in which we skip warning
+    local dry_run_option=""
+    local file_option="false"
+    local give_warning="true"
+    local recursive_option="-r"
+    local filter_options=()
+    local itemize_option=""
+    local remote_shell_option=()
+    local exclude_git_folder=""
+    local delete_option="--delete"
+    local trigger_option=""
+    local update_option=""
+    local verbose_option=""
+    local rsync_options=""
+    local quiet_option="false"
 
-           "modsize")
-             trigger_option=""
-             ;;
-           
-           "sizeonly")
-             trigger_option="--size-only"
-             ;;
-           
-           "checksum")
-             trigger_option="--checksum"
-             ;;
-
-           "always")
-             trigger_option="--ignore-times"
-             ;;
-
-           *)
-             echo "ERROR: unknown trigger '$interface_trigger_option'" >&2
-             exit 1
-             ;;
-         esac         
-         continue
-      fi    
-      if [[  "$1" == "-u" || "$1" == "--update" ]]
-      then 
-         update_option="$1"
-         shift 1       
-         continue
-      fi    
-      if [[  "$1" == "--rsync-options" ]]
-      then 
-         options+=( "$2" ) 
-         rsync_options="$2"
-         shift 2
-         continue
-      fi    
-      
-      # if no match found, then
-      echo "ERROR: unknown option '$1'" >&2
-      exit 1   
-  done    
-  
-  # if both itemize_option and verbose_option disable the take verbose_option implicitly
-  if [[ "$itemize_option" == "" && "$verbose_option" == "" ]]
-  then 
-      verbose_option="-v"    
-  fi        
-  
-  # quiet option overrules always 
-  if [[ "$quiet_option" == "true" ]]
-  then 
-      verbose_option=""  
-      itemize_option=""  
-  fi             
-                
-  if [[  "$#" -ne "2" ]]
-  then
-      echo "$USAGE"
-      exit 0
-  else
-      local source_mode dest_mode
-      local source="$1"
-      local dest="$2"
-      local remote=""
-      local remote_side="none"
-      
-      debug  "source: $source"
-      debug  "dest: $dest"
-
-      
-      source_mode="$( __get_mode "$source" )"
-      dest_mode=$( __get_mode "$dest" )
-     
-      if   [[ "$source_mode" != "local" && "$dest_mode" == "local" ]]
-      then
-          remote_side="source"
-          mode="$source_mode"
-          remote="${source#*://}" # strip mode prefix
-          source="$remote"
-      elif [[ "$source_mode" == "local" && "$dest_mode" != "local" ]]
-      then
-          remote_side="dest"
-          mode="$dest_mode"
-          remote="${dest#*://}" # strip mode prefix
-          dest="$remote"
-      elif [[ "$source_mode" != "local" && "$dest_mode" != "local" ]]
-      then
-          echo "ERROR: source and destination cannot be both remotes" >&2
-          exit 1
-      else
-          mode="local"
-      fi
-
-
-      # a docker volume remote can be specified as docker-vol://VOLUMENAME[:PATH]
-      # translate docker-vol://VOLUMENAME to docker-vol://VOLUMENAME:/
-      if [[  "$mode" == "docker-vol" && "$remote" != *:* ]]
-      then
-          # remote is specified as VOLUMENAME
-          # so we add :/
-          remote="${remote}:/"
-          if [[ "$source_mode" == "local" ]]
-          then 
-              # dest is a volume remote and must be adapted
-              dest="${dest}:/"
-          else
-              # source is a volume remote and must be adapted
-              source="${source}:/"
-          fi 
-      fi
-
-
-      if [[ "$mode" != "local" &&  "$remote" != *:* ]]
-      then
-          echo "ERROR: incorrect remote location '$mode://$remote'" >&2
-          exit 1
-      fi    
-     
-      # note: verify that directory is specified in remote location (not empty string)
-      #       This is important because we are going to add a / to end of
-      #       directory, causing a non-specified directory to be become root '/' !!
-      local remote_dir
-      remote_dir=${remote##*:}
-      if [[ "$remote" != "" && "$remote_dir" == "" ]]
-      then 
-          if [[ "$file_option" == "false" ]]
-          then
-              echo "ERROR: incorrect remote location '$mode://$remote' : directory is missing" >&2
-          else     
-              echo "ERROR: incorrect remote location '$mode://$remote' : file is missing" >&2
-          fi    
-          exit 1
-      fi    
-
-      # make sure that source and dest directories end with / 
-      if [[ "$file_option" == "false" ]]
-      then
-          # ${x%/} removes trailing slash  => prevents getting // 
-          source="${source%/}/"
-          dest="${dest%/}/"
-          # explanation:
-          # rsync needs directory argument to be ended with '/' to mirror
-          # its content, otherwise it will also mirror the directory. 
-          # Latter we do not want, because is confusing.
-          # KISS: mirror does mirror contents of two directories"
-      fi 
-      
-      if [[  "$remote_side" == "dest" ]]
-      then
-          if [[ "$file_option" == "false" ]]
-          then
-              if [[ ! -d "$source" ]]
-              then
-                 echo "ERROR: incorrect source location '$source' : directory does not exist" >&2
-                 exit 1
-              fi   
-          else
-              if [[ ! -f "$source" ]]
-              then
-                 echo "ERROR: incorrect source location '$source' : file does not exist" >&2
-                 exit 1
-              fi   
-          fi    
-      fi    
-
-      if [[ "$give_warning" == "true" ]]
-      then   
-          local prompt
-          echo "We STRONGLY advice to do a 'dry-run' first (option -n), because mirroring"    
-          echo "can destroy the destination if you are not careful!"       
-          echo "Going to mirror:"
-          echo "    $source_mode://$source   =>   $dest_mode://$dest"
-          read -p "Are you sure you want to continue? <y/N> " prompt
-          if ! [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]
-          then
+    while [[ "$#" > 0 && "$1" == -* ]]; do
+        options+=("$1")
+        if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+            local PAGER="$(get_pager)"
+            echo "$HELP" | $PAGER
             exit 0
-          fi
-      fi  
+        fi
+        if [[ "$1" == "-v" || "$1" == "-vv" ]]; then
+            verbose_option="$1"
+            shift
+            continue
+        fi
+        if [[ "$1" == "--debug" ]]; then
+            DEBUG="true"
+            shift
+            continue
+        fi
+        if [[ "$1" == "-q" ]]; then
+            quiet_option="true"
+            shift
+            continue
+        fi
+        if [[ "$1" == "-i" ]]; then
+            shift
+            itemize_option="-i"
+            continue
+        fi
+        if [[ "$1" == "-a" ]]; then
+            shift # remove first argument
+            preserve="a"
+            #        -a, --archive
+            #            This is equivalent to -rlptgoD. It is a quick way of saying you want recursion and want to preserve almost everything
+            #            => adds options pogD extra (compared with rtl)
+            #
+            #         -p, --perms                 preserve permissions
+            #         -o, --owner                 preserve owner (super-user only)
+            #         -g, --group                 preserve group
+            #         -D                          same as --devices --specials
+            #         --devices                   preserve device files (super-user only)
+            #         --specials                  preserve special files
+            continue
+        fi
+        if [[ "$1" == "--keep-dest-only" ]]; then
+            shift
+            delete_option=""
+            continue
+        fi
+        if [[ "$1" == "--dry-run" || "$1" == "-n" ]]; then
+            shift
+            dry_run_option="--dry-run"
+            give_warning="false"
+            continue
+        fi
+        if [[ "$1" == "--file" ]]; then
+            file_option="true"
+            recursive_option=""
+            shift 1
+            continue
+        fi
+        if [[ "$1" == "-f" || "$1" == "--filter" ]]; then
+            filter_options+=("-f")
+            filter_options+=("$2")
+            options+=("-f")
+            options+=("$2")
+            shift 2
+            continue
+        fi
+        if [[ "$1" == "--no-git" ]]; then
+            shift
+            #  --exclude=PATTERN
+            exclude_git_folder="--exclude=.git"
+            continue
+        fi
+        if [[ "$1" == "--no-warn" || "$1" == "-y" ]]; then
+            shift
+            give_warning="false"
+            continue
+        fi
+        if [[ "$1" == "--trigger" || "$1" == "-t" ]]; then
+            interface_trigger_option="$2"
+            options+=("$2")
+            shift 2
+            case "$interface_trigger_option" in
 
-      if [[ "$mode" == "docker" || "$mode" == "ssh" ]]
-      then     
-          # use remote shell ('ssh' or 'docker exec -i') 
-          if [[ "$mode" == "docker" ]]
-          then
-              container="${remote%:*}"
-              if ! docker exec $container which rsync >& /dev/null
-              then     
-                  echo "ERROR: docker container '$container' does not contain 'rsync' which is required!" >&2
-                  exit 1
-              fi    
-              remote_shell_option+=("-e" "docker exec -i")
-          else    
-              remote_shell_option+=("-e" "ssh")
-          fi    
-      fi    
+            "modsize")
+                trigger_option=""
+                ;;
 
-      if [[ "$source_mode" == "local" ]]
-      then
-          if [[ ! -e "$source" ]]
-          then      
-             echo "ERROR: '$source' does not exist"
-             exit 1
-          fi         
-          if [[ "$file_option" == "false" &&  ! -d "$source" ]]
-          then      
-             echo "ERROR: local directory '$source' does not exist"
-             exit 1
-          fi   
-          if [[ "$file_option" == "true" &&  ! -f "$source" ]]
-          then
-             echo "ERROR: local file '$source' does not exist"
-             exit 1
-          fi     
-      fi            
+            "sizeonly")
+                trigger_option="--size-only"
+                ;;
 
-      if [[ "$mode" == "local" || "$mode" == "docker" || "$mode" == "ssh" ]]
-      then          
-          debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}" $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
-          command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}"  $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
-      elif [[ "$mode" == "docker-img"  ]]
-      then
+            "checksum")
+                trigger_option="--checksum"
+                ;;
 
-          if [[ "$remote_side" == "source"  ]]
-          then 
-              # mirror from docker image to local dir
+            "always")
+                trigger_option="--ignore-times"
+                ;;
 
-              # source is specified as IMAGENAME[:TAG]:PATH
-              local source_img
-              local source_path
-              local source_ctr
-              source_img="${source%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
-              source_path="${source##*:}" # you get PATH by removing prefix till : greedy
+            *)
+                echo "ERROR: unknown trigger '$interface_trigger_option'" >&2
+                exit 1
+                ;;
+            esac
+            continue
+        fi
+        if [[ "$1" == "-u" || "$1" == "--update" ]]; then
+            update_option="$1"
+            shift 1
+            continue
+        fi
+        if [[ "$1" == "--rsync-options" ]]; then
+            options+=("$2")
+            rsync_options="$2"
+            shift 2
+            continue
+        fi
 
-              if [[ $(docker_check_image_exist "$source_img") == "false" ]] 
-              then
-                 echo "ERROR: docker image '$source_img' doesn't exist" >&2 
-                 exit 1
-              fi
+        # if no match found, then
+        echo "ERROR: unknown option '$1'" >&2
+        exit 1
+    done
 
-              image=$source_img
-              if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
-                  exit 1
-              fi    
-              if ! docker run --rm  --entrypoint="" $image which sh >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
-              if ! docker run --rm  --entrypoint="" $image which sleep >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
+    # if both itemize_option and verbose_option disable the take verbose_option implicitly
+    if [[ "$itemize_option" == "" && "$verbose_option" == "" ]]; then
+        verbose_option="-v"
+    fi
 
-              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
-              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
-              # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
-              source_ctr="ctr_dummy_${source_img%:*}"
-              # slash is allowed in image name but not in container name, so escape it
-              source_ctr=$(echo $source_ctr| tr '/' '7')
-              if [[ $(docker_check_container_exist "$source_ctr") == "true" ]] 
-              then
-                 docker container rm -f "$source_ctr"
-              fi
-              
-              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
-              # note: we use sh -c to run multiple commands to first echo what cmd we
-              #       apply to image which is shown in docker history of image, then
-              #       we replace the sh process with sleep infinity process, so that only
-              #       one process is running in image. All processes run should effect
-              #       the filesystem.
-              docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror  ${options[@]} docker-img://$source_img:$source_path $dest"  >& /dev/null
-                            
-              # mirror from container
-              debug mirror from container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest" 
-              mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest" 
-              
-              # cleanup dummy container
-              #docker container kill -s 9 "$source_ctr"
-              docker container rm -f "$source_ctr"  >& /dev/null
-          else
-              # mirror local dir into docker image    
+    # quiet option overrules always
+    if [[ "$quiet_option" == "true" ]]; then
+        verbose_option=""
+        itemize_option=""
+    fi
 
-              # dest is specified as IMAGENAME[:TAG]:PATH
-              local dest_img
-              local dest_path
-              local dest_ctr
-              dest_img="${dest%:*}"  # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
-              dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
+    if [[ "$#" -ne "2" ]]; then
+        echo "$USAGE"
+        exit 0
+    else
+        local source_mode dest_mode
+        local source="$1"
+        local dest="$2"
+        local remote=""
+        local remote_side="none"
 
-              if [[ $(docker_check_image_exist "$dest_img") == "false" ]] 
-              then
-                 echo "ERROR: docker image '$dest_img' doesn't exist" >&2
-                 exit 1
-              fi
-              
-              # if  docker container ls --format "table {{.Image}}"| tail -n +2 | grep "$dest_img"  >& /dev/null
-              # then
-              #     blocking_container=$(docker container ls --format "{{.Image}};{{.Names}}" | command grep "torxakis_prevbuild;"|cut -d ';' -f 2 | head -1)
-              #     echo "ERROR: docker image '$dest_img' is already used by container '$blocking_container' and can therefore not be modified." >&2
-              #     exit 1
-              #  fi           
+        debug "source: $source"
+        debug "dest: $dest"
 
-              image=$dest_img
-              if ! docker run --rm  --entrypoint="" $image which rsync >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
-                  exit 1
-              fi    
-              if ! docker run --rm  --entrypoint="" $image which sh >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
-              if ! docker run --rm  --entrypoint="" $image which sleep >& /dev/null
-              then     
-                  echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
-                  exit 1
-              fi    
+        source_mode="$(__get_mode "$source")"
+        dest_mode=$(__get_mode "$dest")
 
-              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
-              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
-              dest_ctr="ctr_dummy_${dest_img%:*}"
-              # slash is allowed in image name but not in container name, so escape it
-              dest_ctr=$(echo $dest_ctr| tr '/' '7')
-              if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]] 
-              then
-                 docker container rm -f "$dest_ctr"  >& /dev/null
-              fi
-             
-              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
-              # note: we use sh -c to run multiple commands to first echo what cmd we
-              #       apply to image which is shown in docker history of image, then
-              #       we replace the sh process with sleep infinity process, so that only
-              #       one process is running in image. All processes run should effect
-              #       the filesystem.
-              docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]} $source docker-img://$dest_img:$dest_path"  >& /dev/null
-              
-              # mirror into container
-              debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path" 
-              mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path" 
-            
-              debug "run diff"
-              if [[  "$(docker container diff $dest_ctr)" == "" ]]
-              then
-                  debug "no change applied to image; no layers added"
-              else       
-                  #only if found change in container 
+        if [[ "$source_mode" != "local" && "$dest_mode" == "local" ]]; then
+            remote_side="source"
+            mode="$source_mode"
+            remote="${source#*://}" # strip mode prefix
+            source="$remote"
+        elif [[ "$source_mode" == "local" && "$dest_mode" != "local" ]]; then
+            remote_side="dest"
+            mode="$dest_mode"
+            remote="${dest#*://}" # strip mode prefix
+            dest="$remote"
+        elif [[ "$source_mode" != "local" && "$dest_mode" != "local" ]]; then
+            echo "ERROR: source and destination cannot be both remotes" >&2
+            exit 1
+        else
+            mode="local"
+        fi
 
-                  debug "run commit"
-                  # create new image from container
-                  img_from_dest_ctr="img_${dest_ctr}"
-                  docker commit "${dest_ctr}" "${img_from_dest_ctr}"   >& /dev/null
+        # a docker volume remote can be specified as docker-vol://VOLUMENAME[:PATH]
+        # translate docker-vol://VOLUMENAME to docker-vol://VOLUMENAME:/
+        if [[ "$mode" == "docker-vol" && "$remote" != *:* ]]; then
+            # remote is specified as VOLUMENAME
+            # so we add :/
+            remote="${remote}:/"
+            if [[ "$source_mode" == "local" ]]; then
+                # dest is a volume remote and must be adapted
+                dest="${dest}:/"
+            else
+                # source is a volume remote and must be adapted
+                source="${source}:/"
+            fi
+        fi
 
-                  debug "run rm"
-                  # give new image the tag of the original image and cleanup the old image
-                  docker image rm --force "$dest_img"   >& /dev/null # only deleting tag of image; image will persist under its id
-                  docker image tag "${img_from_dest_ctr}" "$dest_img"  >& /dev/null
-                  docker image rm --force "${img_from_dest_ctr}"  >& /dev/null
-              fi     
-              # cleanup dummy container
-              #docker container kill -s 9 "$dest_ctr"
-              docker container rm --force "$dest_ctr"  >& /dev/null
-          fi
-      elif [[ "$mode" == "docker-vol"  ]]
-      then
+        if [[ "$mode" != "local" && "$remote" != *:* ]]; then
+            echo "ERROR: incorrect remote location '$mode://$remote'" >&2
+            exit 1
+        fi
 
-          if [[ "$remote_side" == "source"  ]]
-          then 
-              # mirror from docker volume to local dir
+        # note: verify that directory is specified in remote location (not empty string)
+        #       This is important because we are going to add a / to end of
+        #       directory, causing a non-specified directory to be become root '/' !!
+        local remote_dir
+        remote_dir=${remote##*:}
+        if [[ "$remote" != "" && "$remote_dir" == "" ]]; then
+            if [[ "$file_option" == "false" ]]; then
+                echo "ERROR: incorrect remote location '$mode://$remote' : directory is missing" >&2
+            else
+                echo "ERROR: incorrect remote location '$mode://$remote' : file is missing" >&2
+            fi
+            exit 1
+        fi
 
-              # source is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
-              local source_vol
-              local source_path
-              source_vol="${source%:*}"  # you get VOLUMENAME by removing suffix till : none-greedy
-              source_path="${source##*:}" # you get PATH by removing prefix till : greedy
-             
-              if [[ -z $(docker volume ls -qf name="^$source_vol\$") ]]
-              then 
-                  echo "ERROR: docker volume '$source_vol' doesn't exist" >&2
-                  exit 1
-                  exit
-              fi
+        # make sure that source and dest directories end with /
+        if [[ "$file_option" == "false" ]]; then
+            # ${x%/} removes trailing slash  => prevents getting //
+            source="${source%/}/"
+            dest="${dest%/}/"
+            # explanation:
+            # rsync needs directory argument to be ended with '/' to mirror
+            # its content, otherwise it will also mirror the directory.
+            # Latter we do not want, because is confusing.
+            # KISS: mirror does mirror contents of two directories"
+        fi
 
-              # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
-              source_img="alpinelinux/rsyncd"
-              
+        if [[ "$remote_side" == "dest" ]]; then
+            if [[ "$file_option" == "false" ]]; then
+                if [[ ! -d "$source" ]]; then
+                    echo "ERROR: incorrect source location '$source' : directory does not exist" >&2
+                    exit 1
+                fi
+            else
+                if [[ ! -f "$source" ]]; then
+                    echo "ERROR: incorrect source location '$source' : file does not exist" >&2
+                    exit 1
+                fi
+            fi
+        fi
 
-              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
-              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
-              # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
-              source_ctr="ctr_dummy_source_vol_${source_vol}"
-              if [[ $(docker_check_container_exist "$source_ctr") == "true" ]] 
-              then
-                 docker container rm -f "$source_ctr"
-              fi
+        if [[ "$give_warning" == "true" ]]; then
+            local prompt
+            echo "We STRONGLY advice to do a 'dry-run' first (option -n), because mirroring"
+            echo "can destroy the destination if you are not careful!"
+            echo "Going to mirror:"
+            echo "    $source_mode://$source   =>   $dest_mode://$dest"
+            read -p "Are you sure you want to continue? <y/N> " prompt
+            if ! [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
+                exit 0
+            fi
+        fi
 
-              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
-              docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/"  --entrypoint="" "$source_img" sh -c "exec sleep 10000d"  >& /dev/null
-                            
-              # mirror from volume's /data dir in container
-              debug mirror from volume /data dir in container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest" 
-              mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest" 
-              
-              # cleanup dummy container
-              #docker container kill -s 9 "$source_ctr"
-              docker container rm -f "$source_ctr"  >& /dev/null
-          else
-              # mirror local dir into docker volume    
+        if [[ "$mode" == "docker" || "$mode" == "ssh" ]]; then
+            # use remote shell ('ssh' or 'docker exec -i')
+            if [[ "$mode" == "docker" ]]; then
+                container="${remote%:*}"
+                if ! docker exec $container which rsync >&/dev/null; then
+                    echo "ERROR: docker container '$container' does not contain 'rsync' which is required!" >&2
+                    exit 1
+                fi
+                remote_shell_option+=("-e" "docker exec -i")
+            else
+                remote_shell_option+=("-e" "ssh")
+            fi
+        fi
 
-              # dest is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
-              local dest_vol
-              local dest_path
-              dest_vol="${dest%:*}"  # you get VOLUMENAME by removing suffix till : none-greedy
-              dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
-              debug "dest_vol=$dest_vol"
-              debug "dest_path=$dest_path"
+        if [[ "$source_mode" == "local" ]]; then
+            if [[ ! -e "$source" ]]; then
+                echo "ERROR: '$source' does not exist"
+                exit 1
+            fi
+            if [[ "$file_option" == "false" && ! -d "$source" ]]; then
+                echo "ERROR: local directory '$source' does not exist"
+                exit 1
+            fi
+            if [[ "$file_option" == "true" && ! -f "$source" ]]; then
+                echo "ERROR: local file '$source' does not exist"
+                exit 1
+            fi
+        fi
 
-              if [[ -z $(docker volume ls -qf name="^$dest_vol\$") ]]
-              then 
-                  echo "ERROR: docker volume '$dest_vol' doesn't exist" >&2
-                  exit 1
-                  exit
-              fi
+        if [[ "$mode" == "local" || "$mode" == "docker" || "$mode" == "ssh" ]]; then
+            debug command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}" $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
+            command rsync $rsync_options $trigger_option $dry_run_option $itemize_option $delete_option $exclude_git_folder "${filter_options[@]}" $recursive_option $update_option $verbose_option -${preserve}z "${remote_shell_option[@]}" "$source" "$dest"
+        elif [[ "$mode" == "docker-img" ]]; then
 
+            if [[ "$remote_side" == "source" ]]; then
+                # mirror from docker image to local dir
 
-              # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
-              dest_img="alpinelinux/rsyncd"
-              
+                # source is specified as IMAGENAME[:TAG]:PATH
+                local source_img
+                local source_path
+                local source_ctr
+                source_img="${source%:*}"   # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+                source_path="${source##*:}" # you get PATH by removing prefix till : greedy
 
+                if [[ $(docker_check_image_exist "$source_img") == "false" ]]; then
+                    echo "ERROR: docker image '$source_img' doesn't exist" >&2
+                    exit 1
+                fi
 
-              # create dummy container does "sleep infinity" which shouldn't effect the filesystem
-              # container names is image name with tag removed and prefixed with "ctr_dummy_" 
-              dest_ctr="ctr_dummy_dest_vol_${dest_vol}"
-              if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]] 
-              then
-                 docker container rm -f "$dest_ctr"  >& /dev/null
-              fi
-             
-              # run dummy container with sleep command; instead of infinity we 10000 days which is more portable 
-              docker run --name "$dest_ctr" --rm -d  -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d"  >& /dev/null
-              
-              # mirror into volume's /data/ dir in container
-              debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}" 
-              mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}" 
-            
-              # cleanup dummy container
-              #docker container kill -s 9 "$dest_ctr"
-              docker container rm --force "$dest_ctr"  >& /dev/null
-          fi
-      else
-          echo "ERROR: unknown mode '$mode'" >&2
-          exit 1
-      fi
-  fi
+                image=$source_img
+                if ! docker run --rm --entrypoint="" $image which rsync >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                    exit 1
+                fi
+                if ! docker run --rm --entrypoint="" $image which sh >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
+                    exit 1
+                fi
+                if ! docker run --rm --entrypoint="" $image which sleep >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
+                    exit 1
+                fi
+
+                # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+                # container names is image name with tag removed and prefixed with "ctr_dummy_"
+                # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
+                source_ctr="ctr_dummy_${source_img%:*}"
+                # slash is allowed in image name but not in container name, so escape it
+                source_ctr=$(echo $source_ctr | tr '/' '7')
+                if [[ $(docker_check_container_exist "$source_ctr") == "true" ]]; then
+                    docker container rm -f "$source_ctr"
+                fi
+
+                # run dummy container with sleep command; instead of infinity we 10000 days which is more portable
+                # note: we use sh -c to run multiple commands to first echo what cmd we
+                #       apply to image which is shown in docker history of image, then
+                #       we replace the sh process with sleep infinity process, so that only
+                #       one process is running in image. All processes run should effect
+                #       the filesystem.
+                docker run --name "$source_ctr" --rm -d --entrypoint="" "$source_img" sh -c "exec sleep 10000d # mirror  ${options[@]} docker-img://$source_img:$source_path $dest" >&/dev/null
+
+                # mirror from container
+                debug mirror from container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest"
+                mirror "${options[@]}" "docker://$source_ctr:$source_path" "$dest"
+
+                # cleanup dummy container
+                #docker container kill -s 9 "$source_ctr"
+                docker container rm -f "$source_ctr" >&/dev/null
+            else
+                # mirror local dir into docker image
+
+                # dest is specified as IMAGENAME[:TAG]:PATH
+                local dest_img
+                local dest_path
+                local dest_ctr
+                dest_img="${dest%:*}"   # you get IMAGENAME[:TAG] by removing suffix till : none-greedy
+                dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
+
+                if [[ $(docker_check_image_exist "$dest_img") == "false" ]]; then
+                    echo "ERROR: docker image '$dest_img' doesn't exist" >&2
+                    exit 1
+                fi
+
+                # if  docker container ls --format "table {{.Image}}"| tail -n +2 | grep "$dest_img"  >& /dev/null
+                # then
+                #     blocking_container=$(docker container ls --format "{{.Image}};{{.Names}}" | command grep "torxakis_prevbuild;"|cut -d ';' -f 2 | head -1)
+                #     echo "ERROR: docker image '$dest_img' is already used by container '$blocking_container' and can therefore not be modified." >&2
+                #     exit 1
+                #  fi
+
+                image=$dest_img
+                if ! docker run --rm --entrypoint="" $image which rsync >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'rsync' which is required!" >&2
+                    exit 1
+                fi
+                if ! docker run --rm --entrypoint="" $image which sh >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'sh' which is required for syncing with a docker image!" >&2
+                    exit 1
+                fi
+                if ! docker run --rm --entrypoint="" $image which sleep >&/dev/null; then
+                    echo "ERROR: docker image '$image' does not contain 'sleep' which is required for syncing with a docker image!" >&2
+                    exit 1
+                fi
+
+                # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+                # container names is image name with tag removed and prefixed with "ctr_dummy_"
+                dest_ctr="ctr_dummy_${dest_img%:*}"
+                # slash is allowed in image name but not in container name, so escape it
+                dest_ctr=$(echo $dest_ctr | tr '/' '7')
+                if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]]; then
+                    docker container rm -f "$dest_ctr" >&/dev/null
+                fi
+
+                # run dummy container with sleep command; instead of infinity we 10000 days which is more portable
+                # note: we use sh -c to run multiple commands to first echo what cmd we
+                #       apply to image which is shown in docker history of image, then
+                #       we replace the sh process with sleep infinity process, so that only
+                #       one process is running in image. All processes run should effect
+                #       the filesystem.
+                docker run --name "$dest_ctr" --rm -d --entrypoint="" "$dest_img" sh -c "exec sleep 10000d # mirror ${options[@]} $source docker-img://$dest_img:$dest_path" >&/dev/null
+
+                # mirror into container
+                debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path"
+                mirror "${options[@]}" "$source" "docker://${dest_ctr}:$dest_path"
+
+                debug "run diff"
+                if [[ "$(docker container diff $dest_ctr)" == "" ]]; then
+                    debug "no change applied to image; no layers added"
+                else
+                    #only if found change in container
+
+                    debug "run commit"
+                    # create new image from container
+                    img_from_dest_ctr="img_${dest_ctr}"
+                    docker commit "${dest_ctr}" "${img_from_dest_ctr}" >&/dev/null
+
+                    debug "run rm"
+                    # give new image the tag of the original image and cleanup the old image
+                    docker image rm --force "$dest_img" >&/dev/null # only deleting tag of image; image will persist under its id
+                    docker image tag "${img_from_dest_ctr}" "$dest_img" >&/dev/null
+                    docker image rm --force "${img_from_dest_ctr}" >&/dev/null
+                fi
+                # cleanup dummy container
+                #docker container kill -s 9 "$dest_ctr"
+                docker container rm --force "$dest_ctr" >&/dev/null
+            fi
+        elif [[ "$mode" == "docker-vol" ]]; then
+
+            if [[ "$remote_side" == "source" ]]; then
+                # mirror from docker volume to local dir
+
+                # source is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
+                local source_vol
+                local source_path
+                source_vol="${source%:*}"   # you get VOLUMENAME by removing suffix till : none-greedy
+                source_path="${source##*:}" # you get PATH by removing prefix till : greedy
+
+                if [[ -z $(docker volume ls -qf name="^$source_vol\$") ]]; then
+                    echo "ERROR: docker volume '$source_vol' doesn't exist" >&2
+                    exit 1
+                    exit
+                fi
+
+                # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
+                source_img="alpinelinux/rsyncd"
+
+                # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+                # container names is image name with tag removed and prefixed with "ctr_dummy_"
+                # note: source img name you get from source_img as IMAGENAME[:TAG] by removing the optional :TAG suffix
+                source_ctr="ctr_dummy_source_vol_${source_vol}"
+                if [[ $(docker_check_container_exist "$source_ctr") == "true" ]]; then
+                    docker container rm -f "$source_ctr"
+                fi
+
+                # run dummy container with sleep command; instead of infinity we 10000 days which is more portable
+                docker run --name "$source_ctr" --rm -d -v "$source_vol:/data/" --entrypoint="" "$source_img" sh -c "exec sleep 10000d" >&/dev/null
+
+                # mirror from volume's /data dir in container
+                debug mirror from volume /data dir in container to local dir:\n mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest"
+                mirror "${options[@]}" "docker://$source_ctr:/data/$source_path" "$dest"
+
+                # cleanup dummy container
+                #docker container kill -s 9 "$source_ctr"
+                docker container rm -f "$source_ctr" >&/dev/null
+            else
+                # mirror local dir into docker volume
+
+                # dest is as VOLUMENAME:PATH ; note that we added ':/' if user supplied VOLUME
+                local dest_vol
+                local dest_path
+                dest_vol="${dest%:*}"   # you get VOLUMENAME by removing suffix till : none-greedy
+                dest_path="${dest##*:}" # you get PATH by removing prefix till : greedy
+                debug "dest_vol=$dest_vol"
+                debug "dest_path=$dest_path"
+
+                if [[ -z $(docker volume ls -qf name="^$dest_vol\$") ]]; then
+                    echo "ERROR: docker volume '$dest_vol' doesn't exist" >&2
+                    exit 1
+                    exit
+                fi
+
+                # https://hub.docker.com/r/alpinelinux/rsyncd  -> multi platform, and contains echo and rsync commands
+                dest_img="alpinelinux/rsyncd"
+
+                # create dummy container does "sleep infinity" which shouldn't effect the filesystem
+                # container names is image name with tag removed and prefixed with "ctr_dummy_"
+                dest_ctr="ctr_dummy_dest_vol_${dest_vol}"
+                if [[ $(docker_check_container_exist "$dest_ctr") == "true" ]]; then
+                    docker container rm -f "$dest_ctr" >&/dev/null
+                fi
+
+                # run dummy container with sleep command; instead of infinity we 10000 days which is more portable
+                docker run --name "$dest_ctr" --rm -d -v "$dest_vol:/data/" --entrypoint="" "$dest_img" sh -c "exec sleep 10000d" >&/dev/null
+
+                # mirror into volume's /data/ dir in container
+                debug mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}"
+                mirror "${options[@]}" "$source" "docker://${dest_ctr}:/data/${dest_path}"
+
+                # cleanup dummy container
+                #docker container kill -s 9 "$dest_ctr"
+                docker container rm --force "$dest_ctr" >&/dev/null
+            fi
+        else
+            echo "ERROR: unknown mode '$mode'" >&2
+            exit 1
+        fi
+    fi
 }
 
-# private function 
+# private function
 __get_mode() {
-  set -eE
+    set -eE
     local mode
     readonly location="$1"
 
-    if [[ $location == *://* ]]
-    then
-      mode="${location%://*}"
+    if [[ $location == *://* ]]; then
+        mode="${location%://*}"
     else
-      if [[ $location == *:* ]]
-      then
-        mode="ssh"
-      else
-        mode="local"
-      fi
+        if [[ $location == *:* ]]; then
+            mode="ssh"
+        else
+            mode="local"
+        fi
     fi
 
-    printf $mode 
-}       
+    printf $mode
+}
 
 mirror "$@"
